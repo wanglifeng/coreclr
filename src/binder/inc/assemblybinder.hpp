@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ============================================================
 //
 // AssemblyBinder.hpp
@@ -47,6 +46,7 @@ namespace BINDER_SPACE
                                     /* in */  PEAssembly          *pParentAssembly,
                                     /* in */  BOOL                 fNgenExplicitBind,
                                     /* in */  BOOL                 fExplicitBindToNativeImage,
+                                    /* in */  bool                 excludeAppPaths,
                                     /* out */ Assembly           **ppAssembly);
 
         static HRESULT BindToSystem(/* in */ SString    &systemDirectory,
@@ -75,7 +75,7 @@ namespace BINDER_SPACE
                                    /* in */  LPCTSTR      szMDAssemblyPath = NULL);
 
 #if defined(FEATURE_HOST_ASSEMBLY_RESOLVER) && !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE) && !defined(MDILNIGEN)
-        static HRESULT BindUsingHostAssemblyResolver (/* in */ CLRPrivBinderAssemblyLoadContext *pLoadContextToBindWithin,
+        static HRESULT BindUsingHostAssemblyResolver (/* in */ INT_PTR pManagedAssemblyLoadContextToBindWithin,
                                                       /* in */ AssemblyName       *pAssemblyName,
                                                       /* in */ IAssemblyName      *pIAssemblyName,
                                                       /* out */ Assembly           **ppAssembly);
@@ -128,6 +128,7 @@ namespace BINDER_SPACE
         static HRESULT BindByName(/* in */  ApplicationContext *pApplicationContext,
                                   /* in */  AssemblyName       *pAssemblyName,
                                   /* in */  DWORD               dwBindFlags,
+                                  /* in */  bool                excludeAppPaths,
                                   /* out */ BindResult         *pBindResult);
 
         // See code:BINDER_SPACE::AssemblyBinder::GetAssembly for info on fNgenExplicitBind
@@ -137,14 +138,17 @@ namespace BINDER_SPACE
                                     /* in */  PathString         &assemblyPath,
                                     /* in */  BOOL                fNgenExplicitBind,
                                     /* in */  BOOL                fExplicitBindToNativeImage,
+                                    /* in */  bool                excludeAppPaths,
                                     /* out */ BindResult         *pBindResult);
 
         static HRESULT BindLocked(/* in */  ApplicationContext *pApplicationContext,
                                   /* in */  AssemblyName       *pAssemblyName,
                                   /* in */  DWORD               dwBindFlags,
+                                  /* in */  bool                excludeAppPaths,
                                   /* out */ BindResult         *pBindResult);
         static HRESULT BindLockedOrService(/* in */  ApplicationContext *pApplicationContext,
                                            /* in */  AssemblyName       *pAssemblyName,
+                                           /* in */  bool                excludeAppPaths,
                                            /* out */ BindResult         *pBindResult);
 
         static HRESULT FindInExecutionContext(/* in */  ApplicationContext  *pApplicationContext,
@@ -154,8 +158,8 @@ namespace BINDER_SPACE
         static HRESULT BindByTpaList(/* in */  ApplicationContext  *pApplicationContext,
                                      /* in */  AssemblyName        *pRequestedAssemblyName,
                                      /* in */  BOOL                 fInspectionOnly,
-                                     /* out */ BindResult          *pBindResult,
-                                     /* out */ bool                *pfUnifiedAppAssemblyToPlatform);
+                                     /* in */  bool                 excludeAppPaths,
+                                     /* out */ BindResult          *pBindResult);
         
         static HRESULT Register(/* in */  ApplicationContext *pApplicationContext,
                                 /* in */  BOOL                fInspectionOnly,

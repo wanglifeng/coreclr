@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -33,7 +32,7 @@ SET_DEFAULT_DEBUG_CHANNEL(SYNC);
 
 enum
 {
-    c_cchMaxEvent = MAX_PATH + 1
+    c_cchMaxEvent = MAX_LONGPATH + 1
 };
 
 CObjectType CorUnix::otManualResetEvent(
@@ -97,7 +96,6 @@ CreateEventA(
          IN LPCSTR lpName)
 {
     HANDLE hEvent = NULL;
-    WCHAR pwName[c_cchMaxEvent];
     CPalThread *pthr = NULL;
     PAL_ERROR palError;
 
@@ -107,28 +105,10 @@ CreateEventA(
 
     pthr = InternalGetCurrentThread();
     
-    if (lpName != NULL)
+    if (lpName != nullptr)
     {
-        palError = InternalWszNameFromSzName(
-            pthr,
-            lpName,
-            pwName,
-            sizeof(pwName) / sizeof(pwName[0])
-            );
-
-        if (NO_ERROR != palError)
-        {
-            goto CreateEventAExit;
-        }
-
-        palError = InternalCreateEvent(
-            pthr,
-            lpEventAttributes,
-            bManualReset,
-            bInitialState,
-            pwName,
-            &hEvent
-            );
+        ASSERT("lpName: Cross-process named objects are not supported in PAL");
+        palError = ERROR_NOT_SUPPORTED;
     }
     else
     {
@@ -141,8 +121,6 @@ CreateEventA(
             &hEvent
             );
     }
-
-CreateEventAExit:    
 
     //
     // We always need to set last error, even on success:
@@ -257,6 +235,13 @@ CorUnix::InternalCreateEvent(
         lpName,
         phEvent
         );
+
+    if (lpName != nullptr)
+    {
+        ASSERT("lpName: Cross-process named objects are not supported in PAL");
+        palError = ERROR_NOT_SUPPORTED;
+        goto InternalCreateEventExit;
+    }
 
     palError = g_pObjectManager->AllocateObject(
         pthr,
@@ -471,6 +456,7 @@ InternalSetEventExit:
     return palError;
 }
 
+// TODO: Implementation of OpenEventA() doesn't exist, do we need it? More generally, do we need the A versions at all?
 
 /*++
 Function:
@@ -502,20 +488,17 @@ OpenEventW(
     pthr = InternalGetCurrentThread();
 
     /* validate parameters */
-    if (lpName == NULL)
+    if (lpName == nullptr)
     {
         ERROR("name is NULL\n");
         palError = ERROR_INVALID_PARAMETER;
         goto OpenEventWExit;            
     }
-
-    palError = InternalOpenEvent(
-        pthr,
-        dwDesiredAccess,
-        bInheritHandle,
-        lpName,
-        &hEvent
-        );
+    else
+    {
+        ASSERT("lpName: Cross-process named objects are not supported in PAL");
+        palError = ERROR_NOT_SUPPORTED;
+    }
 
 OpenEventWExit:
 

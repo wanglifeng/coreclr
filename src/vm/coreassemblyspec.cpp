@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ============================================================
 //
 // CoreAssemblySpec.cpp
@@ -176,14 +175,6 @@ VOID  AssemblySpec::Bind(AppDomain      *pAppDomain,
     }
     else
     {
-        // BindByWhereRef is supported only for the default (TPA) Binder in CoreCLR.
-        _ASSERTE(pBinder == pTPABinder);
-        if (pBinder != pTPABinder)
-        {
-            // Fail with an exception for better diagnosis.
-            COMPlusThrowHR(COR_E_INVALIDOPERATION);
-        }
-        
         hr = pTPABinder->Bind(assemblyDisplayName,
                            m_wszCodeBase,
                            GetParentAssembly()? GetParentAssembly()->GetFile():NULL,

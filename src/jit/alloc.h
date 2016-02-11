@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /*****************************************************************************/
 
 #ifndef _ALLOC_H_
@@ -31,32 +30,6 @@ inline void DbgDelete(void * ptr)
     (void)ClrFreeInProcessHeap(0, ptr);
 }
 
-// technically we can use these, we just have to insure that
-//  1) we can clean up.  2) we check out of memory conditions
-// Outlawing them is easier, if you need some memory for debug-only
-// stuff, define a special new operator with a dummy arg
-
-#define __OPERATOR_NEW_INLINE 1         // indicate that I have defined these 
-#ifdef _MSC_VER
-static inline void * __cdecl operator new(size_t n)
-{
-    assert(!"use JIT memory allocators");
-    return(0);
-}
-static inline void * __cdecl operator new[](size_t n)
-{
-    assert(!"use JIT memory allocators ");
-    return(0);
-};
-static inline void __cdecl operator delete(void * p)
-{
-    assert(!"use JIT memory allocators ");
-};
-static inline void __cdecl operator delete[](void * p)
-{
-    assert(!"use JIT memory allocators ");
-}
-#endif // _MSC_VER
 #endif // DEBUG
 
 /*****************************************************************************/

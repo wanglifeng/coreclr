@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -496,7 +495,7 @@ void                CodeGen::inst_RV_IV(instruction  ins,
 #ifndef LEGACY_BACKEND
         // TODO-Cleanup: Add a comment about why this is unreached() for RyuJIT backend.
         unreached();
-#else LEGACY_BACKEND
+#else //LEGACY_BACKEND
         regNumber tmpReg = regSet.rsGrabReg(RBM_ALLINT & ~genRegMask(reg));
         instGen_Set_Reg_To_Imm(size, tmpReg, val);
         getEmitter()->emitIns_R_R(ins, size, reg, tmpReg, flags);
@@ -2285,6 +2284,7 @@ void                CodeGen::inst_RV_TT(instruction ins,
 #if CPU_LOAD_STORE_ARCH
     if (ins == INS_mov)
     {
+#if defined (_TARGET_ARM_)
         if (tree->TypeGet() != TYP_LONG)
         {
             ins = ins_Move_Extend(tree->TypeGet(), (tree->gtFlags & GTF_REG_VAL)!=0);
@@ -2297,6 +2297,11 @@ void                CodeGen::inst_RV_TT(instruction ins,
         {
             ins = ins_Move_Extend(TYP_INT, (tree->gtFlags & GTF_REG_VAL)!=0 &&  genRegPairHi(tree->gtRegPair) != REG_STK);
         }
+#elif defined(_TARGET_ARM64_)
+        ins = ins_Move_Extend(tree->TypeGet(), (tree->gtFlags & GTF_REG_VAL)!=0);
+#else
+        NYI("CodeGen::inst_RV_TT with INS_mov");
+#endif
     }
 #endif // CPU_LOAD_STORE_ARCH
 
@@ -2627,6 +2632,8 @@ void        CodeGen::inst_RV_SH(instruction  ins,
 
     assert(ins == INS_rcl  ||
            ins == INS_rcr  ||
+           ins == INS_rol  ||
+           ins == INS_ror  ||
            ins == INS_shl  ||
            ins == INS_shr  ||
            ins == INS_sar);
@@ -2639,6 +2646,8 @@ void        CodeGen::inst_RV_SH(instruction  ins,
 
         assert(INS_rcl + 1 == INS_rcl_1);
         assert(INS_rcr + 1 == INS_rcr_1);
+        assert(INS_rol + 1 == INS_rol_1);
+        assert(INS_ror + 1 == INS_ror_1);
         assert(INS_shl + 1 == INS_shl_1);
         assert(INS_shr + 1 == INS_shr_1);
         assert(INS_sar + 1 == INS_sar_1);
@@ -2651,6 +2660,8 @@ void        CodeGen::inst_RV_SH(instruction  ins,
 
         assert(INS_rcl + 2 == INS_rcl_N);
         assert(INS_rcr + 2 == INS_rcr_N);
+        assert(INS_rol + 2 == INS_rol_N);
+        assert(INS_ror + 2 == INS_ror_N);
         assert(INS_shl + 2 == INS_shl_N);
         assert(INS_shr + 2 == INS_shr_N);
         assert(INS_sar + 2 == INS_sar_N);
@@ -3126,7 +3137,7 @@ bool                CodeGenInterface::validImmForBL (ssize_t     addr)
         // This matches the usual behavior for NGEN, since we normally do generate "BL".
         (!compiler->info.compMatchedVM && (compiler->opts.eeFlags & CORJIT_FLG_PREJIT))
         ||
-        (compiler->info.compCompHnd->getRelocTypeHint((void*)addr) == IMAGE_REL_BASED_THUMB_BRANCH24);
+        (compiler->eeGetRelocTypeHint((void*)addr) == IMAGE_REL_BASED_THUMB_BRANCH24);
 }
 bool                CodeGen::arm_Valid_Imm_For_BL   (ssize_t     addr)
 {
@@ -3186,15 +3197,13 @@ instruction         CodeGen::ins_Move_Extend(var_types   srcType,
 #if defined(_TARGET_XARCH_) && !defined(LEGACY_BACKEND)
     if (varTypeIsFloating(srcType))
     {
-        InstructionSet iset = compiler->getFloatingPointInstructionSet();
-
         if (srcType == TYP_DOUBLE)
         {
-            return INS_movsdsse2;
+            return (srcInReg) ? INS_movaps : INS_movsdsse2;
         }
         else if (srcType == TYP_FLOAT)
         {
-            return INS_movss;
+            return (srcInReg) ? INS_movaps : INS_movss;
         }
         else
         {
@@ -3318,6 +3327,13 @@ instruction         CodeGenInterface::ins_Load(var_types   srcType,
     if (varTypeIsSIMD(srcType))
     {
 #if defined(_TARGET_XARCH_) && !defined(LEGACY_BACKEND)
+#ifdef FEATURE_SIMD
+        if (srcType == TYP_SIMD8)
+        {
+            return INS_movsdsse2;
+        }
+        else
+#endif // FEATURE_SIMD
         if (compiler->canUseAVX())
         {
             // TODO-CQ: consider alignment of AVX vectors.
@@ -3469,6 +3485,13 @@ instruction         CodeGenInterface::ins_Store(var_types   dstType, bool aligne
 #if defined(_TARGET_XARCH_) && !defined(LEGACY_BACKEND)
     if (varTypeIsSIMD(dstType))
     {
+#ifdef FEATURE_SIMD
+        if (dstType == TYP_SIMD8)
+        {
+            return INS_movsdsse2;
+        }
+        else
+#endif // FEATURE_SIMD
         if (compiler->canUseAVX())
         {
             // TODO-CQ: consider alignment of AVX vectors.
@@ -3890,7 +3913,7 @@ void                CodeGen::instGen_MemoryBarrier()
 #elif defined (_TARGET_ARM_)
     getEmitter()->emitIns_I(INS_dmb, EA_4BYTE, 0xf);
 #elif defined (_TARGET_ARM64_)
-    NYI_ARM64("instGen_MemoryBarrier");
+    getEmitter()->emitIns_BARR(INS_dmb, INS_BARRIER_SY);
 #else
 #error "Unknown _TARGET_"
 #endif

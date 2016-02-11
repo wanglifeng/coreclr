@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // ZapImport.cpp
 //
@@ -677,7 +676,7 @@ void ZapImportSectionSignatures::PlaceStubDispatchCell(ZapImport * pImport)
     {
         // Create the delay load helper
         ReadyToRunHelper helper = (ReadyToRunHelper)(READYTORUN_HELPER_DelayLoad_MethodCall | READYTORUN_HELPER_FLAG_VSD);
-        ZapNode * pDelayLoadHelper = m_pImage->GetImportTable()->GetPlacedIndirectHelperThunk(helper, (PVOID)m_dwIndex);
+        ZapNode * pDelayLoadHelper = m_pImage->GetImportTable()->GetPlacedIndirectHelperThunk(helper, (PVOID)(SIZE_T)m_dwIndex);
         pCell->SetDelayLoadHelper(pDelayLoadHelper);
     }
     else
@@ -778,7 +777,7 @@ void ZapImportSectionSignatures::PlaceExternalMethodCell(ZapImport * pImport)
     if (IsReadyToRunCompilation())
     {
         // Create the delay load helper
-        ZapNode * pDelayLoadHelper = m_pImage->GetImportTable()->GetPlacedIndirectHelperThunk(READYTORUN_HELPER_DelayLoad_MethodCall, (PVOID)m_dwIndex);
+        ZapNode * pDelayLoadHelper = m_pImage->GetImportTable()->GetPlacedIndirectHelperThunk(READYTORUN_HELPER_DelayLoad_MethodCall, (PVOID)(SIZE_T)m_dwIndex);
         pCell->SetDelayLoadHelper(pDelayLoadHelper);
     }
     else
@@ -1287,10 +1286,18 @@ public:
         if (token != mdTokenNil)
         {
             _ASSERTE(TypeFromToken(token) == mdtMethodDef || TypeFromToken(token) == mdtMemberRef);
-
-            pTable->EncodeModule(
-                (TypeFromToken(token) == mdtMethodDef) ? ENCODE_METHOD_ENTRY_DEF_TOKEN : ENCODE_METHOD_ENTRY_REF_TOKEN,
-                referencingModule, pSigBuilder);
+            
+            // It's a NativeCallable method , then encode it as ENCODE_METHOD_NATIVE_ENTRY
+            if (pTable->GetCompileInfo()->IsNativeCallableMethod(handle))
+            {
+                pTable->EncodeModule(ENCODE_METHOD_NATIVE_ENTRY, referencingModule, pSigBuilder);
+            }
+            else
+            {
+                pTable->EncodeModule(
+                    (TypeFromToken(token) == mdtMethodDef) ? ENCODE_METHOD_ENTRY_DEF_TOKEN : ENCODE_METHOD_ENTRY_REF_TOKEN,
+                    referencingModule, pSigBuilder);
+            }
 
             pSigBuilder->AppendData(RidFromToken(token));
         }
@@ -1766,8 +1773,12 @@ void ZapImportSectionSignatures::PlaceDynamicHelperCell(ZapImport * pImport)
     }
 
     // Create the delay load helper
-    ReadyToRunHelper helperNum = GetDelayLoadHelperForDynamicHelper(pCell->GetKind());
-    ZapNode * pDelayLoadHelper = m_pImage->GetImportTable()->GetPlacedIndirectHelperThunk(helperNum, (PVOID)m_dwIndex);
+    ReadyToRunHelper helperNum = GetDelayLoadHelperForDynamicHelper(
+        (CORCOMPILE_FIXUP_BLOB_KIND)(pCell->GetKind() & ~CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE));
+
+    ZapNode * pDelayLoadHelper = m_pImage->GetImportTable()->GetPlacedIndirectHelperThunk(helperNum, (PVOID)(SIZE_T)m_dwIndex, 
+        (pCell->GetKind() & CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE) ? pCell : NULL);
+
     pCell->SetDelayLoadHelper(pDelayLoadHelper);
 
     // Add entry to both the the cell and data sections
@@ -1784,7 +1795,7 @@ ZapImport * ZapImportTable::GetDynamicHelperCell(CORCOMPILE_FIXUP_BLOB_KIND kind
     {
         SigBuilder sigBuilder;
 
-        sigBuilder.AppendData(kind);
+        sigBuilder.AppendData(kind & ~CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE);
 
         GetCompileInfo()->EncodeClass(m_pImage->GetModuleHandle(), handle, &sigBuilder, NULL, NULL);
 
@@ -1798,7 +1809,8 @@ ZapImport * ZapImportTable::GetDynamicHelperCell(CORCOMPILE_FIXUP_BLOB_KIND kind
 {
     SigBuilder sigBuilder;
 
-    EncodeMethod(kind, handle, &sigBuilder, pResolvedToken);
+    EncodeMethod((CORCOMPILE_FIXUP_BLOB_KIND)(kind & ~CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE),
+        handle, &sigBuilder, pResolvedToken);
 
     return GetImportForSignature<ZapDynamicHelperCell, ZapNodeType_DynamicHelperCell>((void *)kind, &sigBuilder);
 }
@@ -1807,7 +1819,8 @@ ZapImport * ZapImportTable::GetDynamicHelperCell(CORCOMPILE_FIXUP_BLOB_KIND kind
 {
     SigBuilder sigBuilder;
 
-    EncodeField(kind, handle, &sigBuilder, pResolvedToken);
+    EncodeField((CORCOMPILE_FIXUP_BLOB_KIND)(kind & ~CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE),
+        handle, &sigBuilder, pResolvedToken);
 
     return GetImportForSignature<ZapDynamicHelperCell, ZapNodeType_DynamicHelperCell>((void *)kind, &sigBuilder);
 }
@@ -1816,7 +1829,14 @@ class ZapIndirectHelperThunk : public ZapImport
 {
     DWORD SaveWorker(ZapWriter * pZapWriter);
 
+    ZapNode * m_pCell;
+
 public:
+    void SetCell(ZapNode * pCell)
+    {
+        m_pCell = pCell;
+    }
+
     ReadyToRunHelper GetReadyToRunHelper()
     {
         return (ReadyToRunHelper)((DWORD)GetHandle() & ~READYTORUN_HELPER_FLAG_VSD);
@@ -1880,6 +1900,7 @@ public:
     }
 };
 
+#ifdef _TARGET_ARM_
 static void MovRegImm(BYTE* p, int reg)
 {
     *(WORD *)(p + 0) = 0xF240;
@@ -1887,6 +1908,7 @@ static void MovRegImm(BYTE* p, int reg)
     *(WORD *)(p + 4) = 0xF2C0;
     *(WORD *)(p + 6) = (UINT16)(reg << 8);
 }
+#endif // _TARGET_ARM_
 
 DWORD ZapIndirectHelperThunk::SaveWorker(ZapWriter * pZapWriter)
 {
@@ -1934,6 +1956,17 @@ DWORD ZapIndirectHelperThunk::SaveWorker(ZapWriter * pZapWriter)
 #elif defined(_TARGET_AMD64_)
     if (IsDelayLoadHelper())
     {
+        if (m_pCell != NULL)
+        {
+            // lea rax, [pCell]
+            *p++ = 0x48;
+            *p++ = 0x8D;
+            *p++ = 0x05;
+            if (pImage != NULL)
+                pImage->WriteReloc(buffer, (int)(p - buffer), m_pCell, 0, IMAGE_REL_BASED_REL32);
+            p += 4;
+        }
+        else
         if (IsVSD())
         {
             // mov rax, r11
@@ -1963,10 +1996,15 @@ DWORD ZapIndirectHelperThunk::SaveWorker(ZapWriter * pZapWriter)
     else
     if (IsLazyHelper())
     {
-        // mov rdx, [module]
         *p++ = 0x48;
         *p++ = 0x8B;
+#ifdef UNIX_AMD64_ABI
+        // mov rsi, [module]
+        *p++ = 0x35;
+#else
+        // mov rdx, [module]
         *p++ = 0x15;
+#endif
         if (pImage != NULL)
             pImage->WriteReloc(buffer, (int) (p - buffer), pImage->GetImportTable()->GetHelperImport(READYTORUN_HELPER_Module), 0, IMAGE_REL_BASED_REL32);
         p += 4;
@@ -2087,9 +2125,21 @@ ZapNode * ZapImportTable::GetIndirectHelperThunk(ReadyToRunHelper helperNum, PVO
     return pImport;
 }
 
-ZapNode * ZapImportTable::GetPlacedIndirectHelperThunk(ReadyToRunHelper helperNum, PVOID pArg)
+ZapNode * ZapImportTable::GetPlacedIndirectHelperThunk(ReadyToRunHelper helperNum, PVOID pArg, ZapNode * pCell)
 {
-    ZapNode * pImport = GetImport<ZapIndirectHelperThunk, ZapNodeType_IndirectHelperThunk>((void *)helperNum, pArg);
+    ZapNode * pImport;
+    if (pCell != NULL)
+    {
+        ZapIndirectHelperThunk * pIndirectHelperThunk = new (m_pImage->GetHeap()) ZapIndirectHelperThunk();
+        pIndirectHelperThunk->SetHandle((void *)helperNum);
+        pIndirectHelperThunk->SetHandle2(pArg);
+        pIndirectHelperThunk->SetCell(pCell);
+        pImport = pIndirectHelperThunk;
+    }
+    else
+    {
+        pImport = GetImport<ZapIndirectHelperThunk, ZapNodeType_IndirectHelperThunk>((void *)helperNum, pArg);
+    }
     if (!pImport->IsPlaced())
         PlaceIndirectHelperThunk(pImport);
 #if defined(_TARGET_ARM_) && !defined(BINDER)

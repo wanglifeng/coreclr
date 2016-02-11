@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 // 
@@ -153,9 +152,9 @@ extern HMODULE g_hInstance;
 // This function throws an exception that can be caught by the debugger,
 // instead of allowing the default CRT behavior of invoking Watson to failfast.
 void __cdecl _SOS_invalid_parameter(
-   const wchar_t * expression,
-   const wchar_t * function, 
-   const wchar_t * file, 
+   const WCHAR * expression,
+   const WCHAR * function, 
+   const WCHAR * file, 
    unsigned int line,
    uintptr_t pReserved
 )

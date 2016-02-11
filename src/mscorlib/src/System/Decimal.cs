@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 namespace System {
     
@@ -218,11 +219,7 @@ namespace System {
         // Constructs a Decimal from a Currency value.
         //
         internal Decimal(Currency value) {
-            Decimal temp = Currency.ToDecimal(value);
-            this.lo = temp.lo;
-            this.mid = temp.mid;
-            this.hi = temp.hi;
-            this.flags = temp.flags;
+            this = Currency.ToDecimal(value);
         }
 
         // Don't remove these 2 methods below. They are required by the fx when the are dealing with Currency in their

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=============================================================================
 **
@@ -68,7 +67,7 @@ BOOL CleanUpFiles()
             if(!SetFileAttributesA (gfaTestsFile[i].name, FILE_ATTRIBUTE_NORMAL))
             {
                 result = FALSE;
-                Trace("ERROR:%d: Error setting attributes [%s][%d]\n", gfaTestsFile[i].name, FILE_ATTRIBUTE_NORMAL); 
+                Trace("ERROR:%d: Error setting attributes [%s][%d]\n", GetLastError(), gfaTestsFile[i].name, FILE_ATTRIBUTE_NORMAL); 
             } 
 
             if(!DeleteFileA (gfaTestsFile[i].name))
@@ -104,7 +103,7 @@ BOOL SetUpFiles()
         if(!SetFileAttributesA (gfaTestsFile[i].name, gfaTestsFile[i].expectedAttribs))
         {
             result = FALSE;
-            Trace("ERROR:%d: Error setting attributes [%s][%d]\n", gfaTestsFile[i].name, gfaTestsFile[i].expectedAttribs); 
+            Trace("ERROR:%d: Error setting attributes [%s][%d]\n", GetLastError(), gfaTestsFile[i].name, gfaTestsFile[i].expectedAttribs); 
         } 
     }
 
@@ -126,7 +125,7 @@ BOOL CleanUpDirs()
             if(!SetFileAttributesA (gfaTestsDir[i].name, FILE_ATTRIBUTE_DIRECTORY))
             {
                 result = FALSE;
-                Trace("ERROR:%d: Error setting attributes [%s][%d]\n", gfaTestsDir[i].name, (FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_DIRECTORY)); 
+                Trace("ERROR:%d: Error setting attributes [%s][%d]\n", GetLastError(), gfaTestsDir[i].name, (FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_DIRECTORY)); 
             } 
 
             if(!RemoveDirectoryA (gfaTestsDir[i].name))
@@ -160,14 +159,14 @@ BOOL SetUpDirs()
         if(!SetFileAttributesA (gfaTestsDir[i].name, gfaTestsDir[i].expectedAttribs))
         {
             result = FALSE;
-            Trace("ERROR:%d: Error setting attributes [%s][%d]\n", gfaTestsDir[i].name, gfaTestsDir[i].expectedAttribs); 
+            Trace("ERROR:%d: Error setting attributes [%s][%d]\n", GetLastError(), gfaTestsDir[i].name, gfaTestsDir[i].expectedAttribs); 
         } 
 
         ret = GetFileAttributesA (gfaTestsDir[i].name);
         if(ret != gfaTestsDir[i].expectedAttribs)
         {
             result = FALSE;
-            Trace("ERROR:%d: Error setting attributes [%s][%d]\n", gfaTestsDir[i].name, gfaTestsDir[i].expectedAttribs); 
+            Trace("ERROR: Error setting attributes [%s][%d]\n", gfaTestsDir[i].name, gfaTestsDir[i].expectedAttribs); 
         } 
         // Trace("Setup Dir setting attr [%d], returned [%d]\n", gfaTestsDir[i].expectedAttribs, ret);
 

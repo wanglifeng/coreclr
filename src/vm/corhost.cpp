@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // CorHost.cpp
 //
@@ -1217,6 +1216,58 @@ ErrExit:
 }
 
 #ifdef FEATURE_CORECLR
+/*
+ * This method processes the arguments sent to the host which are then used
+ * to invoke the main method.
+ * Note -
+ * [0] - points to the assemblyName that has been sent by the host.
+ * The rest are the arguments sent to the assembly.
+ * Also note, this might not always return the exact same identity as the cmdLine
+ * used to invoke the method.
+ *
+ * For example :-
+ * ActualCmdLine - Foo arg1 arg2.
+ * (Host1)       - Full_path_to_Foo arg1 arg2
+*/
+void SetCommandLineArgs(LPCWSTR pwzAssemblyPath, int argc, LPCWSTR* argv)
+{
+    CONTRACTL
+    {
+        THROWS;
+        GC_TRIGGERS;
+        MODE_COOPERATIVE;
+    }
+    CONTRACTL_END;
+
+    struct _gc
+    {
+        PTRARRAYREF cmdLineArgs;
+    } gc;
+
+    ZeroMemory(&gc, sizeof(gc));
+    GCPROTECT_BEGIN(gc);
+
+    gc.cmdLineArgs = (PTRARRAYREF)AllocateObjectArray(argc + 1 /* arg[0] should be the exe name*/, g_pStringClass);
+    OBJECTREF orAssemblyPath = StringObject::NewString(pwzAssemblyPath);
+    gc.cmdLineArgs->SetAt(0, orAssemblyPath);
+
+    for (int i = 0; i < argc; ++i)
+    {
+        OBJECTREF argument = StringObject::NewString(argv[i]);
+        gc.cmdLineArgs->SetAt(i + 1, argument);
+    }
+
+    MethodDescCallSite setCmdLineArgs(METHOD__ENVIRONMENT__SET_COMMAND_LINE_ARGS);
+
+    ARG_SLOT args[] =
+    {
+        ObjToArgSlot(gc.cmdLineArgs),
+    };
+    setCmdLineArgs.Call(args);
+
+    GCPROTECT_END();
+}
+
 HRESULT CorHost2::ExecuteAssembly(DWORD dwAppDomainId,
                                       LPCWSTR pwzAssemblyPath,
                                       int argc,
@@ -1270,6 +1321,7 @@ HRESULT CorHost2::ExecuteAssembly(DWORD dwAppDomainId,
         return HOST_E_INVALIDOPERATION;
     }
 
+    INSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP;
     INSTALL_UNWIND_AND_CONTINUE_HANDLER;
 
     _ASSERTE (!pThread->PreemptiveGCDisabled());
@@ -1279,19 +1331,20 @@ HRESULT CorHost2::ExecuteAssembly(DWORD dwAppDomainId,
     {
         GCX_COOP();
 
+        // Here we call the managed method that gets the cmdLineArgs array.
+        SetCommandLineArgs(pwzAssemblyPath, argc, argv);
+
         PTRARRAYREF arguments = NULL;
-        
         GCPROTECT_BEGIN(arguments);
-        
+
         arguments = (PTRARRAYREF)AllocateObjectArray(argc, g_pStringClass);
-        
         for (int i = 0; i < argc; ++i)
         {
             STRINGREF argument = StringObject::NewString(argv[i]);
             arguments->SetAt(i, argument);
         }
 
-        DWORD retval = pAssembly->ExecuteMainMethod(&arguments);
+        DWORD retval = pAssembly->ExecuteMainMethod(&arguments, TRUE /* waitForOtherThreads */);
         if (pReturnValue)
         {
             *pReturnValue = retval;
@@ -1302,6 +1355,7 @@ HRESULT CorHost2::ExecuteAssembly(DWORD dwAppDomainId,
     }
 
     UNINSTALL_UNWIND_AND_CONTINUE_HANDLER;
+    UNINSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP;
 
 ErrExit:
 
@@ -2500,7 +2554,7 @@ VOID CorHost2::ExecuteMainInner(Assembly* pRootAssembly)
 		// since this is the thread 0 entry point for AppX apps we use
 		// the EntryPointFilter so that an unhandled exception here will
 		// trigger the same behavior as in classic apps.
-        pParam->pRootAssembly->ExecuteMainMethod(NULL);
+        pParam->pRootAssembly->ExecuteMainMethod(NULL, TRUE /* waitForOtherThreads */);
     }
     PAL_EXCEPT_FILTER(EntryPointFilter)
     {
@@ -3055,7 +3109,7 @@ STDMETHODIMP CorHost2::UnloadAppDomain(DWORD dwDomainId, BOOL fWaitUntilDone)
             else
             {
                 _ASSERTE(!"Not reachable");
-                hr = FALSE;
+                hr = S_FALSE;
             }
         }
         END_ENTRYPOINT_NOTHROW;
@@ -3953,7 +4007,7 @@ public:
         static DWORD lastTime = (DWORD)-1;
         if (eMemoryAvailable == eMemoryAvailableLow)
         {
-            FastInterlockIncrement (&g_bLowMemoryFromHost);
+            FastInterlockIncrement ((LONG *)&g_bLowMemoryFromHost);
             DWORD curTime = GetTickCount();
             if (curTime < lastTime || curTime - lastTime >= 0x2000)
             {
@@ -3963,7 +4017,7 @@ public:
         }
         else
         {
-            FastInterlockExchange (&g_bLowMemoryFromHost, FALSE);
+            FastInterlockExchange ((LONG *)&g_bLowMemoryFromHost, FALSE);
         }
         END_ENTRYPOINT_NOTHROW;
 
@@ -6669,7 +6723,7 @@ HRESULT CCLRErrorReportingManager::EndCustomDump()
 }
 
 #ifdef FEATURE_WINDOWSPHONE
-HRESULT CopyStringWorker(WCHAR** pTarget, WCHAR const* pSource)
+HRESULT CopyStringWorker(_Out_ WCHAR** pTarget, WCHAR const* pSource)
 {
     LIMITED_METHOD_CONTRACT;
 
@@ -6758,7 +6812,7 @@ HRESULT CCLRErrorReportingManager::BucketParamsCache::SetAt(BucketParameterIndex
     return CopyStringWorker(&m_pParams[index], val);
 }
 
-HRESULT CCLRErrorReportingManager::CopyToDataCache(WCHAR** pTarget, WCHAR const* pSource)
+HRESULT CCLRErrorReportingManager::CopyToDataCache(_Out_ WCHAR** pTarget, WCHAR const* pSource)
 {
     LIMITED_METHOD_CONTRACT;
 
@@ -6774,7 +6828,7 @@ HRESULT CCLRErrorReportingManager::SetApplicationData(ApplicationDataKey key, WC
     if(g_fEEStarted)
         return HOST_E_INVALIDOPERATION;
 
-    if (pValue == NULL || wcslen(pValue) > MAX_PATH)
+    if (pValue == NULL || wcslen(pValue) > MAX_LONGPATH)
         return E_INVALIDARG;
 
     HRESULT hr = S_OK;

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // Code that is used by both the Unix corerun and coreconsole.
@@ -16,37 +15,83 @@
 #include <string>
 #include <string.h>
 #include <sys/stat.h>
+#include "coreruncommon.h"
 
-// The name of the CoreCLR native runtime DLL
-#if defined(__APPLE__)
-static const char * const coreClrDll = "libcoreclr.dylib";
-#else
-static const char * const coreClrDll = "libcoreclr.so";
+#define SUCCEEDED(Status) ((Status) >= 0)
+
+// Name of the environment variable controlling server GC.
+// If set to 1, server GC is enabled on startup. If 0, server GC is
+// disabled. Server GC is off by default.
+static const char* serverGcVar = "CORECLR_SERVER_GC";
+
+// Name of the environment variable controlling concurrent GC,
+// used in the same way as serverGcVar. Concurrent GC is on by default.
+static const char* concurrentGcVar = "CORECLR_CONCURRENT_GC";
+
+// Prototype of the coreclr_initialize function from the libcoreclr.so
+typedef int (*InitializeCoreCLRFunction)(
+            const char* exePath,
+            const char* appDomainFriendlyName,
+            int propertyCount,
+            const char** propertyKeys,
+            const char** propertyValues,
+            void** hostHandle,
+            unsigned int* domainId);
+
+// Prototype of the coreclr_shutdown function from the libcoreclr.so
+typedef int (*ShutdownCoreCLRFunction)(
+            void* hostHandle,
+            unsigned int domainId);
+
+// Prototype of the coreclr_execute_assembly function from the libcoreclr.so
+typedef int (*ExecuteAssemblyFunction)(
+            void* hostHandle,
+            unsigned int domainId,
+            int argc,
+            const char** argv,
+            const char* managedAssemblyPath,
+            unsigned int* exitCode);
+
+#if defined(__LINUX__)
+#define symlinkEntrypointExecutable "/proc/self/exe"
+#elif !defined(__APPLE__)
+#define symlinkEntrypointExecutable "/proc/curproc/exe"
 #endif
 
-// Windows types used by the ExecuteAssembly function
-typedef unsigned int DWORD;
-typedef const char16_t* LPCWSTR;
-typedef const char* LPCSTR;
-typedef int32_t HRESULT;
+bool GetEntrypointExecutableAbsolutePath(std::string& entrypointExecutable)
+{
+    bool result = false;
+    
+    entrypointExecutable.clear();
 
-#define SUCCEEDED(Status) ((HRESULT)(Status) >= 0)
+    // Get path to the executable for the current process using
+    // platform specific means.
+#if defined(__LINUX__) || !defined(__APPLE__)
+    
+    // On non-Mac OS, return the symlink that will be resolved by GetAbsolutePath
+    // to fetch the entrypoint EXE absolute path, inclusive of filename.
+    entrypointExecutable.assign(symlinkEntrypointExecutable);
+    result = true;
+#elif defined(__APPLE__)
+    
+    // On Mac, we ask the OS for the absolute path to the entrypoint executable
+    uint32_t lenActualPath = 0;
+    if (_NSGetExecutablePath(nullptr, &lenActualPath) == -1)
+    {
+        // OSX has placed the actual path length in lenActualPath,
+        // so re-attempt the operation
+        std::string resizedPath(lenActualPath, '\0');
+        char *pResizedPath = const_cast<char *>(resizedPath.c_str());
+        if (_NSGetExecutablePath(pResizedPath, &lenActualPath) == 0)
+        {
+            entrypointExecutable.assign(pResizedPath);
+            result = true;
+        }
+    }
+ #endif 
 
-// Prototype of the ExecuteAssembly function from the libcoreclr.do
-typedef HRESULT (*ExecuteAssemblyFunction)(
-                    LPCSTR exePath,
-                    LPCSTR coreClrPath,
-                    LPCSTR appDomainFriendlyName,
-                    int propertyCount,
-                    LPCSTR* propertyKeys,
-                    LPCSTR* propertyValues,
-                    int argc,
-                    LPCSTR* argv,
-                    LPCSTR managedAssemblyPath,
-                    LPCSTR entryPointAssemblyName,
-                    LPCSTR entryPointTypeName,
-                    LPCSTR entryPointMethodsName,
-                    DWORD* exitCode);
+    return result;
+}
 
 bool GetAbsolutePath(const char* path, std::string& absolutePath)
 {
@@ -233,9 +278,37 @@ int ExecuteManagedAssembly(
     void* coreclrLib = dlopen(coreClrDllPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (coreclrLib != nullptr)
     {
-        ExecuteAssemblyFunction executeAssembly = (ExecuteAssemblyFunction)dlsym(coreclrLib, "ExecuteAssembly");
-        if (executeAssembly != nullptr)
+        InitializeCoreCLRFunction initializeCoreCLR = (InitializeCoreCLRFunction)dlsym(coreclrLib, "coreclr_initialize");
+        ExecuteAssemblyFunction executeAssembly = (ExecuteAssemblyFunction)dlsym(coreclrLib, "coreclr_execute_assembly");
+        ShutdownCoreCLRFunction shutdownCoreCLR = (ShutdownCoreCLRFunction)dlsym(coreclrLib, "coreclr_shutdown");
+
+        if (initializeCoreCLR == nullptr)
         {
+            fprintf(stderr, "Function coreclr_initialize not found in the libcoreclr.so\n");
+        }
+        else if (executeAssembly == nullptr)
+        {
+            fprintf(stderr, "Function coreclr_execute_assembly not found in the libcoreclr.so\n");
+        }
+        else if (shutdownCoreCLR == nullptr)
+        {
+            fprintf(stderr, "Function coreclr_shutdown not found in the libcoreclr.so\n");
+        }
+        else
+        {
+            // check if we are enabling server GC or concurrent GC.
+            // Server GC is off by default, while concurrent GC is on by default.
+            // Actual checking of these string values is done in coreclr_initialize.
+            const char* useServerGc = std::getenv(serverGcVar);
+            if (useServerGc == nullptr) {
+                useServerGc = "0";
+            }
+            
+            const char* useConcurrentGc = std::getenv(concurrentGcVar);
+            if (useConcurrentGc == nullptr) {
+                useConcurrentGc = "1";
+            }
+            
             // Allowed property names:
             // APPBASE
             // - The base path of the application from which the exe and other assemblies will be loaded
@@ -257,7 +330,9 @@ int ExecuteManagedAssembly(
                 "APP_PATHS",
                 "APP_NI_PATHS",
                 "NATIVE_DLL_SEARCH_DIRECTORIES",
-                "AppDomainCompatSwitch"
+                "AppDomainCompatSwitch",
+                "SERVER_GC",
+                "CONCURRENT_GC"
             };
             const char *propertyValues[] = {
                 // TRUSTED_PLATFORM_ASSEMBLIES
@@ -269,32 +344,53 @@ int ExecuteManagedAssembly(
                 // NATIVE_DLL_SEARCH_DIRECTORIES
                 nativeDllSearchDirs.c_str(),
                 // AppDomainCompatSwitch
-                "UseLatestBehaviorWhenTFMNotSpecified"
+                "UseLatestBehaviorWhenTFMNotSpecified",
+                // SERVER_GC
+                useServerGc,
+                // CONCURRENT_GC
+                useConcurrentGc
             };
 
-            HRESULT st = executeAssembly(
-                            currentExeAbsolutePath,
-                            coreClrDllPath.c_str(),
-                            "unixcorerun",
-                            sizeof(propertyKeys) / sizeof(propertyKeys[0]),
-                            propertyKeys,
-                            propertyValues,
-                            managedAssemblyArgc,
-                            managedAssemblyArgv,
-                            managedAssemblyAbsolutePath,
-                            NULL,
-                            NULL,
-                            NULL,
-                            (DWORD*)&exitCode);
+            void* hostHandle;
+            unsigned int domainId;
+
+            int st = initializeCoreCLR(
+                        currentExeAbsolutePath, 
+                        "unixcorerun", 
+                        sizeof(propertyKeys) / sizeof(propertyKeys[0]), 
+                        propertyKeys, 
+                        propertyValues, 
+                        &hostHandle, 
+                        &domainId);
 
             if (!SUCCEEDED(st))
             {
-                fprintf(stderr, "ExecuteAssembly failed - status: 0x%08x\n", st);
+                fprintf(stderr, "coreclr_initialize failed - status: 0x%08x\n", st);
+                exitCode = -1;
             }
-        }
-        else
-        {
-            fprintf(stderr, "Function ExecuteAssembly not found in the libcoreclr.so\n");
+            else 
+            {
+                st = executeAssembly(
+                        hostHandle,
+                        domainId,
+                        managedAssemblyArgc,
+                        managedAssemblyArgv,
+                        managedAssemblyAbsolutePath,
+                        (unsigned int*)&exitCode);
+
+                if (!SUCCEEDED(st))
+                {
+                    fprintf(stderr, "coreclr_execute_assembly failed - status: 0x%08x\n", st);
+                    exitCode = -1;
+                }
+
+                st = shutdownCoreCLR(hostHandle, domainId);
+                if (!SUCCEEDED(st))
+                {
+                    fprintf(stderr, "coreclr_shutdown failed - status: 0x%08x\n", st);
+                    exitCode = -1;
+                }
+            }
         }
 
         if (dlclose(coreclrLib) != 0)

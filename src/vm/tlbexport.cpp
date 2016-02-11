@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //===========================================================================
 // File: TlbExport.CPP
 //
@@ -277,10 +276,10 @@ void ExportTypeLibFromLoadedAssembly(
 
     TypeLibExporter exporter;           // Exporter object.
     LPCWSTR     szModule=0;             // Module filename.
-    WCHAR       rcDrive[_MAX_DRIVE];
-    WCHAR       rcDir[_MAX_DIR];
-    WCHAR       rcFile[_MAX_FNAME];
-    WCHAR       rcTlb[_MAX_PATH+5];     // Buffer for the tlb filename.
+    WCHAR       rcDrive[_MAX_DRIVE] = {0};
+    WCHAR       rcDir[_MAX_DIR] = {0};
+    WCHAR       rcFile[_MAX_FNAME] = {0};
+    WCHAR       rcTlb[_MAX_PATH+5] = {0};     // Buffer for the tlb filename.
     int         bDynamic=0;             // If true, dynamic module.
     Module      *pModule;               // The Assembly's SecurityModule.
     
@@ -796,7 +795,7 @@ void TypeLibExporter::Convert(
     // Win2K: passing in too long a filename triggers a nasty buffer overrun bug
     // when the SaveAll() method is called. We'll avoid triggering this here.
     // 
-    if (wcslen(szTlbName) > MAX_PATH)
+    if (wcslen(szTlbName) > MAX_PATH_FNAME)
         IfFailReport(HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE));
 
     // Reverting to old behavior here until we can fix up the vtable offsets as well.
@@ -5513,7 +5512,7 @@ void TypeLibExporter::GetWellKnownInterface(
     
     CLSIDFromString(wzGuid, &guidTlb);
 
-    // Retrive the major and minor version number.
+    // Retrieve the major and minor version number.
     USHORT wMajor;
     USHORT wMinor;
     Assembly *pAssembly = pMT->GetAssembly();

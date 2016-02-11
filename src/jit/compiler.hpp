@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -17,6 +16,8 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 #define _COMPILER_HPP_
 
 #include "emit.h" // for emitter::emitAddLabel
+
+#include "bitvec.h"
 
 #include "compilerbitsettraits.hpp"
 
@@ -105,7 +106,7 @@ template<typename T>
 inline
 T    genFindLowestBit(T value)
 {
-    return (value & -value);
+    return (value & (0 - value));
 }
 
 /*****************************************************************************/
@@ -508,6 +509,8 @@ inline unsigned      Compiler::funGetFuncIdx(BasicBlock * block)
 inline
 regNumber           genRegNumFromMask(regMaskTP mask)
 {
+    assert(mask != 0);  // Must have one bit set, so can't have a mask of zero
+
     /* Convert the mask to a register number */
 
     regNumber regNum = (regNumber)genLog2(mask);
@@ -635,35 +638,40 @@ bool                isRegParamType(var_types type)
 }
 
 #ifdef _TARGET_AMD64_
-/*****************************************************************************
- * Returns true if 'type' is a struct of size 1, 2,4 or 8 bytes.
- * 'typeClass' is the class handle of 'type'.
- * Out param 'typeSize' (if non-null) is updated with the size of 'type'.
- */
+/*****************************************************************************/
+ // Returns true if 'type' is a struct that can be enregistered for call args 
+ //                         or can be returned by value in multiple registers.
+ //              if 'type' is not a struct the return value will be false.
+ //
+ // Arguments:
+ //    type      - the basic jit var_type for the item being queried
+ //    typeClass - the handle for the struct when 'type' is TYP_STRUCT
+ //    typeSize  - Out param (if non-null) is updated with the size of 'type'.
+ //    forReturn - this is true when we asking about a GT_RETURN context;
+ //                this is false when we are asking about an argument context
+ //
 inline
 bool   Compiler::VarTypeIsMultiByteAndCanEnreg(var_types type, 
                                                CORINFO_CLASS_HANDLE typeClass, 
-                                               unsigned *typeSize)
+                                               unsigned *typeSize, 
+                                               bool forReturn)
 {
     bool result = false;
     unsigned size = 0;
 
-    if (type == TYP_STRUCT)
+    if (varTypeIsStruct(type))
     {
         size = info.compCompHnd->getClassSize(typeClass);
-
-        switch(size)
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+        // Account for the classification of the struct.
+        result = IsRegisterPassable(typeClass);
+#else // !FEATURE_UNIX_AMD64_STRUCT_PASSING
+        type = argOrReturnTypeForStruct(size, typeClass, forReturn);
+        if (type != TYP_UNKNOWN)
         {
-            case 1:
-            case 2:
-            case 4:
-            case 8:
-                result = true;
-                break;
-
-            default:
-                break;
+            result = true;
         }
+#endif // !FEATURE_UNIX_AMD64_STRUCT_PASSING
     }
     else
     {
@@ -764,11 +772,17 @@ inline
 
 inline
 float               getR4LittleEndian(const BYTE * ptr)
-{ return *(UNALIGNED float*)ptr; }
+{
+    __int32 val = getI4LittleEndian(ptr);
+    return *(float *)&val;
+}
 
 inline
 double              getR8LittleEndian(const BYTE * ptr)
-{ return *(UNALIGNED double*)ptr; }
+{
+    __int64 val = getI8LittleEndian(ptr);
+    return *(double *)&val;
+}
 
 
 /*****************************************************************************
@@ -1137,7 +1151,7 @@ GenTreePtr          Compiler::gtNewFieldRef(var_types     typ,
     // If "obj" is the address of a local, note that a field of that struct local has been accessed.
     if (obj != NULL &&
         obj->OperGet() == GT_ADDR &&
-        obj->gtOp.gtOp1->gtType == TYP_STRUCT &&    // ignore "normed structs" since they won't be struct promoted
+        varTypeIsStruct(obj->gtOp.gtOp1) &&
         obj->gtOp.gtOp1->OperGet() == GT_LCL_VAR)
     {
         unsigned lclNum = obj->gtOp.gtOp1->gtLclVarCommon.gtLclNum;
@@ -1290,7 +1304,7 @@ inline unsigned    Compiler::gtSetEvalOrderAndRestoreFPstkLevel(GenTree *      t
 /*****************************************************************************/
 
 inline
-void                GenTree::SetOper(genTreeOps oper)
+void                GenTree::SetOper(genTreeOps oper, ValueNumberUpdate vnUpdate)
 {
     assert(((gtFlags & GTF_NODE_SMALL) != 0) !=
            ((gtFlags & GTF_NODE_LARGE) != 0));
@@ -1328,9 +1342,11 @@ void                GenTree::SetOper(genTreeOps oper)
         gtIntCon.gtFieldSeq = NULL;
     }
 
-    // Clear the ValueNum field as well.
-    // 
-    gtVNPair.SetBoth(ValueNumStore::NoVN);
+    if (vnUpdate == CLEAR_VN)
+    {
+        // Clear the ValueNum field as well.
+        gtVNPair.SetBoth(ValueNumStore::NoVN);
+    }
 }
 
 inline
@@ -1391,9 +1407,15 @@ inline
 void                GenTree::InitNodeSize(){}
 
 inline
-void                GenTree::SetOper(genTreeOps oper)
+void                GenTree::SetOper(genTreeOps oper, ValueNumberUpdate vnUpdate)
 {
     gtOper = oper;
+
+    if (vnUpdate == CLEAR_VN)
+    {
+        // Clear the ValueNum field.
+        gtVNPair.SetBoth(ValueNumStore::NoVN);
+    }
 }
 
 inline
@@ -1447,11 +1469,11 @@ void                GenTree::ChangeOperConst(genTreeOps oper)
 }
 
 inline
-void                GenTree::ChangeOper(genTreeOps oper)
+void                GenTree::ChangeOper(genTreeOps oper, ValueNumberUpdate vnUpdate)
 {
     assert(!OperIsConst(oper)); // use ChangeOperLeaf() instead
 
-    SetOper(oper);
+    SetOper(oper, vnUpdate);
     gtFlags &= GTF_COMMON_MASK;
 
     // Do "oper"-specific initializations...
@@ -1529,18 +1551,6 @@ bool                GenTree::gtOverflowEx() const
     return false;
 }
 
-/*****************************************************************************/
-
-#ifdef DEBUG
-
-inline
-bool                Compiler::gtDblWasInt(GenTree * tree) const
-{
-    return (tree->IsLocal() &&  lvaTable[tree->gtLclVarCommon.gtLclNum].lvDblWasInt);
-}
-
-#endif
-
 /*
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -1574,10 +1584,7 @@ inline unsigned     Compiler::lvaGrabTemp(bool shortLifetime
         {
             // Don't create more LclVar with inlining 
             JITLOG((LL_INFO1000000, INLINER_FAILED "Inlining requires new LclVars and we already have too many locals."));
-
-            JitInlineResult result(INLINE_FAIL, impInlineInfo->inlineCandidateInfo->ilCallerHandle,
-                                   info.compMethodHnd, "Inlining requires new LclVars and we already have too many locals.");
-            compSetInlineResult(result);  // Only fail for this inline attempt.
+            compInlineResult->setFailure("Inlining requires new LclVars and we already have too many locals.");
         }
 
         unsigned tmpNum = pComp->lvaGrabTemp(shortLifetime DEBUGARG(reason));
@@ -1779,7 +1786,7 @@ void          LclVarDsc::decRefCnts(BasicBlock::weight_t weight, Compiler * comp
 {    
     /* Decrement lvRefCnt and lvRefCntWtd */
     Compiler::lvaPromotionType promotionType = DUMMY_INIT(Compiler::PROMOTION_TYPE_NONE);
-    if (lvType == TYP_STRUCT)
+    if (varTypeIsStruct(lvType))
     {        
         promotionType = comp->lvaGetPromotionType(this);
     }
@@ -1819,7 +1826,7 @@ void          LclVarDsc::decRefCnts(BasicBlock::weight_t weight, Compiler * comp
         }    
     }
 
-    if (lvType == TYP_STRUCT && propagate)
+    if (varTypeIsStruct(lvType) && propagate)
     {            
         // For promoted struct locals, decrement lvRefCnt on its field locals as well.
         if (promotionType == Compiler::PROMOTION_TYPE_INDEPENDENT ||
@@ -1868,7 +1875,7 @@ inline
 void            LclVarDsc::incRefCnts(BasicBlock::weight_t weight, Compiler *comp, bool propagate)
 {    
     Compiler::lvaPromotionType promotionType = DUMMY_INIT(Compiler::PROMOTION_TYPE_NONE);
-    if (lvType == TYP_STRUCT)
+    if (varTypeIsStruct(lvType))
     {        
         promotionType = comp->lvaGetPromotionType(this);
     }
@@ -1911,7 +1918,7 @@ void            LclVarDsc::incRefCnts(BasicBlock::weight_t weight, Compiler *com
         }    
     }        
 
-    if (lvType == TYP_STRUCT && propagate)
+    if (varTypeIsStruct(lvType) && propagate)
     {            
         // For promoted struct locals, increment lvRefCnt on its field locals as well.
         if (promotionType == Compiler::PROMOTION_TYPE_INDEPENDENT ||
@@ -2112,7 +2119,7 @@ VARSET_VALRET_TP           Compiler::lvaStmtLclMask(GenTreePtr stmt)
 
 /*****************************************************************************
  * Returns true if the lvType is a TYP_REF or a TYP_BYREF.
- * When the lvType is TYP_STRUCT it searches the GC layout
+ * When the lvType is a TYP_STRUCT it searches the GC layout
  * of the struct and returns true iff it contains a GC ref.
  */
 
@@ -2262,8 +2269,10 @@ int                 Compiler::lvaFrameAddress(int varNum, bool * pFPbased)
         if (lvaDoneFrameLayout > REGALLOC_FRAME_LAYOUT && !varDsc->lvOnFrame)
         {
 #ifdef _TARGET_AMD64_
-            // On amd64, every param has a stack location.
+            // On amd64, every param has a stack location, except on Unix-like systems.
+#ifndef FEATURE_UNIX_AMD64_STRUCT_PASSING
             assert(varDsc->lvIsParam);
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
 #elif defined(_TARGET_X86_) && !defined(LEGACY_BACKEND)
             // For !LEGACY_BACKEND on x86, a stack parameter that is enregistered will have a stack location. 
             assert(varDsc->lvIsParam && !varDsc->lvIsRegArg);
@@ -2583,6 +2592,8 @@ var_types Compiler::mangleVarArgsType(var_types type)
     return type;
 }
 
+// For CORECLR there is no vararg on System V systems.
+#if FEATURE_VARARG
 inline regNumber Compiler::getCallArgIntRegister(regNumber floatReg)
 {
 #ifdef _TARGET_AMD64_
@@ -2624,10 +2635,11 @@ inline regNumber Compiler::getCallArgFloatRegister(regNumber intReg)
     }
 #else  // !_TARGET_AMD64_
     // How will float args be passed for RyuJIT/x86?
-    NYI("getCallArgIntRegister for RyuJIT/x86");
+    NYI("getCallArgFloatRegister for RyuJIT/x86");
     return REG_NA;
 #endif // !_TARGET_AMD64_
 }
+#endif // FEATURE_VARARG
 
 /*
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -2791,6 +2803,8 @@ Compiler::fgWalkResult  Compiler::fgWalkTreePost(GenTreePtr    *pTree,
  * Has this block been added to throw an inlined exception
  * Returns true if the block was added to throw one of:
  *    range-check exception
+ *    argument exception (used by feature SIMD)
+ *    argument range-check exception (used by feature SIMD)
  *    divide by zero exception  (Not used on X86/X64)
  *    null reference exception (Not currently used)
  *    overflow exception
@@ -2812,9 +2826,9 @@ bool                Compiler::fgIsThrowHlpBlk(BasicBlock * block)
 
     if (!((call->gtCall.gtCallMethHnd == eeFindHelper(CORINFO_HELP_RNGCHKFAIL))   ||
           (call->gtCall.gtCallMethHnd == eeFindHelper(CORINFO_HELP_THROWDIVZERO)) ||
-#ifndef RYUJIT_CTPBUILD
+#if COR_JIT_EE_VERSION > 460
           (call->gtCall.gtCallMethHnd == eeFindHelper(CORINFO_HELP_THROWNULLREF)) ||
-#endif
+#endif // COR_JIT_EE_VERSION
           (call->gtCall.gtCallMethHnd == eeFindHelper(CORINFO_HELP_OVERFLOW))))
         return false;
 
@@ -2826,9 +2840,14 @@ bool                Compiler::fgIsThrowHlpBlk(BasicBlock * block)
     {
         if  (block == add->acdDstBlk)
         {
-            return add->acdKind == ACK_RNGCHK_FAIL ||
-                   add->acdKind == ACK_DIV_BY_ZERO ||
-                   add->acdKind == ACK_OVERFLOW;
+            return add->acdKind == SCK_RNGCHK_FAIL ||
+                   add->acdKind == SCK_DIV_BY_ZERO ||
+                   add->acdKind == SCK_OVERFLOW
+#if COR_JIT_EE_VERSION > 460
+                   || add->acdKind == SCK_ARG_EXCPN
+                   || add->acdKind == SCK_ARG_RNG_EXCPN
+#endif //COR_JIT_EE_VERSION
+                ;
         }
     }
 
@@ -2849,9 +2868,17 @@ unsigned            Compiler::fgThrowHlpBlkStkLevel(BasicBlock *block)
     {
         if  (block == add->acdDstBlk)
         {
-            assert(add->acdKind == ACK_RNGCHK_FAIL ||
-                   add->acdKind == ACK_DIV_BY_ZERO ||
-                   add->acdKind == ACK_OVERFLOW);
+            // Compute assert cond separately as assert macro cannot have conditional compilation directives.
+            bool cond = (add->acdKind == SCK_RNGCHK_FAIL ||
+                         add->acdKind == SCK_DIV_BY_ZERO ||
+                         add->acdKind == SCK_OVERFLOW
+#if COR_JIT_EE_VERSION > 460
+                         || add->acdKind == SCK_ARG_EXCPN
+                         || add->acdKind == SCK_ARG_RNG_EXCPN
+#endif //COR_JIT_EE_VERSION
+                         );
+            assert(cond);
+                  
             // TODO: bbTgtStkDepth is DEBUG-only.
             // Should we use it regularly and avoid this search.
             assert(block->bbTgtStkDepth == add->acdStkLvl);
@@ -3408,17 +3435,17 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
  */
 
 inline
-void                Compiler::optAssertionReset(unsigned limit)
+void                Compiler::optAssertionReset(AssertionIndex limit)
 {
-    PREFAST_ASSUME(optAssertionCount <= MAX_ASSERTION_CNT);
+    PREFAST_ASSUME(optAssertionCount <= optMaxAssertionCount);
 
     while (optAssertionCount > limit)
     {
-        unsigned index  = optAssertionCount--;
+        AssertionIndex index  = optAssertionCount--;
         AssertionDsc* curAssertion = optGetAssertion(index);
         unsigned lclNum = curAssertion->op1.lcl.lclNum;
         assert(lclNum < lvaTableCnt);
-        lvaTable[lclNum].lvAssertionDep &= ~optGetAssertionBit(index);
+        BitVecOps::RemoveElemD(apTraits, GetAssertionDep(lclNum), index - 1);
 
         //
         // Find the Copy assertions
@@ -3431,15 +3458,15 @@ void                Compiler::optAssertionReset(unsigned limit)
             //  op2.lcl.lclNum no longer depends upon this assertion
             //  
             lclNum = curAssertion->op2.lcl.lclNum;
-            lvaTable[lclNum].lvAssertionDep &= ~optGetAssertionBit(index);
+            BitVecOps::RemoveElemD(apTraits, GetAssertionDep(lclNum), index - 1);
         }
     }
     while (optAssertionCount < limit)
     {
-        unsigned index  = ++optAssertionCount;
+        AssertionIndex index  = ++optAssertionCount;
         AssertionDsc* curAssertion = optGetAssertion(index);
         unsigned lclNum = curAssertion->op1.lcl.lclNum;
-        lvaTable[lclNum].lvAssertionDep |= optGetAssertionBit(index);
+        BitVecOps::AddElemD(apTraits, GetAssertionDep(lclNum), index - 1);
 
         //
         // Check for Copy assertions
@@ -3452,7 +3479,7 @@ void                Compiler::optAssertionReset(unsigned limit)
             //  op2.lcl.lclNum now depends upon this assertion
             //  
             lclNum = curAssertion->op2.lcl.lclNum;
-            lvaTable[lclNum].lvAssertionDep |= optGetAssertionBit(index);
+            BitVecOps::AddElemD(apTraits, GetAssertionDep(lclNum), index - 1);
         }
     }
 }
@@ -3464,27 +3491,27 @@ void                Compiler::optAssertionReset(unsigned limit)
  */
 
 inline
-void                Compiler::optAssertionRemove(unsigned index)
+void                Compiler::optAssertionRemove(AssertionIndex index)
 {
     assert(index > 0);
     assert(index <= optAssertionCount);
-    PREFAST_ASSUME(optAssertionCount <= MAX_ASSERTION_CNT);
+    PREFAST_ASSUME(optAssertionCount <= optMaxAssertionCount);
 
     AssertionDsc* curAssertion = optGetAssertion(index);
 
     //  Two cases to consider if (index == optAssertionCount) then the last
     //  entry in the table is to be removed and that happens automatically when
-    //  optAssertionCount is decremented and we can just clear the lvAssertionDep bits
+    //  optAssertionCount is decremented and we can just clear the optAssertionDep bits
     //  The other case is when index < optAssertionCount and here we overwrite the
     //  index-th entry in the table with the data found at the end of the table
-    //  Since we are reordering the rable the lvAssertionDep bits need to be recreated
+    //  Since we are reordering the rable the optAssertionDep bits need to be recreated
     //  using optAssertionReset(0) and optAssertionReset(newAssertionCount) will
-    //  correctly update the lvAssertionDep bits 
+    //  correctly update the optAssertionDep bits 
     //
     if (index == optAssertionCount)
     {
         unsigned lclNum = curAssertion->op1.lcl.lclNum;
-        lvaTable[lclNum].lvAssertionDep &= ~optGetAssertionBit(index);
+        BitVecOps::RemoveElemD(apTraits, GetAssertionDep(lclNum), index - 1);
 
         //
         // Check for Copy assertions
@@ -3497,15 +3524,15 @@ void                Compiler::optAssertionRemove(unsigned index)
             //  op2.lcl.lclNum no longer depends upon this assertion
             //  
             lclNum = curAssertion->op2.lcl.lclNum;
-            lvaTable[lclNum].lvAssertionDep &= ~optGetAssertionBit(index);
+            BitVecOps::RemoveElemD(apTraits, GetAssertionDep(lclNum), index - 1);
         }
 
         optAssertionCount--;
     }
     else
     {
-        AssertionDsc* lastAssertion = optGetAssertion(optAssertionCount);
-        unsigned newAssertionCount = optAssertionCount-1;
+        AssertionDsc*  lastAssertion = optGetAssertion(optAssertionCount);
+        AssertionIndex newAssertionCount = optAssertionCount-1;
 
         optAssertionReset(0);            // This make optAssertionCount equal 0
 
@@ -4260,31 +4287,17 @@ bool                Compiler::compIsForInlining()
 
 /*****************************************************************************
  *
- *  Set the inline result in the compiler.
- */
-
-inline
-void                Compiler::compSetInlineResult(const JitInlineResult& result)
-{
-    assert(compIsForInlining());
-    assert(dontInline(result.result()));     // Should only set to a failure state.
-   
-    compInlineResult = result;    
-}
-
-/*****************************************************************************
- *
  *  Check the inline result field in the compiler to see if inlining failed or not.
  */
 
 inline
 bool                Compiler::compDonotInline()
 {
-    if (dontInline(compInlineResult.result()))
+    if (compIsForInlining())
     {
-        assert(compIsForInlining());
-        return true;
-    }    
+       assert(compInlineResult != nullptr);
+       return compInlineResult->isFailure();
+    }
     else
     {
         return false;
@@ -4415,9 +4428,9 @@ bool   Compiler::lvaIsFieldOfDependentlyPromotedStruct (const LclVarDsc *   varD
 //    Returns true if the variable should be reported as tracked in the GC info.
 //
 // Notes:
-//    This never returns true for TYP_STRUCT variables, even if they are tracked.
-//    This is because TYP_STRUCT variables are never tracked as a whole for GC purposes.
-//    It is up to the caller to ensure that the fields of TYP_STRUCT variables are
+//    This never returns true for struct variables, even if they are tracked.
+//    This is because struct variables are never tracked as a whole for GC purposes.
+//    It is up to the caller to ensure that the fields of struct variables are
 //    correctly tracked.
 //    On Amd64, we never GC-track fields of dependently promoted structs, even
 //    though they may be tracked for optimization purposes.
@@ -4449,7 +4462,39 @@ inline void Compiler::EndPhase(Phases phase)
 #if defined(FEATURE_JIT_METHOD_PERF)
     if (pCompJitTimer != NULL) pCompJitTimer->EndPhase(phase);
 #endif
+#if DUMP_FLOWGRAPHS
+    fgDumpFlowGraph(phase);
+#endif // DUMP_FLOWGRAPHS
     previousCompletedPhase = phase;
+#ifdef DEBUG
+    if (dumpIR)
+    {
+       if ((*dumpIRPhase == L'*') 
+       || (wcscmp(dumpIRPhase, PhaseShortNames[phase]) == 0))
+       { 
+           printf("\n");
+           printf("IR after %s (switch: %ls)\n", PhaseEnums[phase], PhaseShortNames[phase]);
+           printf("\n");
+
+           if (dumpIRLinear)
+           { 
+               dFuncIR();
+           }
+           else if (dumpIRTrees)
+           {
+               dTrees();
+           }
+
+           // If we are just dumping a single method and we have a request to exit
+           // after dumping, do so now.
+
+           if (dumpIRExit && ((*dumpIRPhase != L'*') || (phase == PHASE_EMIT_GCEH)))
+           {
+               exit(0);
+           }
+       }
+    }
+#endif
 }
 
 /*****************************************************************************/
@@ -4631,14 +4676,15 @@ inline bool         BasicBlock::endsWithJmpMethod(Compiler *comp)
 {
     if (comp->compJmpOpUsed && (bbJumpKind == BBJ_RETURN) && (bbFlags & BBF_HAS_JMP))
     {
-        GenTreePtr last = bbTreeList->gtPrev;
+        GenTreePtr last = comp->fgGetLastTopLevelStmt(this);
         assert(last != nullptr);
-
         return last->gtStmt.gtStmtExpr->gtOper == GT_JMP;
     }
 
     return false;
 }
+
+#if FEATURE_FASTTAILCALL
 
 // Returns true if the basic block ends with either
 //  i) GT_JMP or
@@ -4647,45 +4693,119 @@ inline bool         BasicBlock::endsWithJmpMethod(Compiler *comp)
 // Params:
 //    comp              - Compiler instance
 //    fastTailCallsOnly - Only consider fast tail calls excluding tail calls via helper.
-inline bool         BasicBlock::endsWithTailCallOrJmp(Compiler *comp, 
+inline bool         BasicBlock::endsWithTailCallOrJmp(Compiler* comp,
                                                       bool fastTailCallsOnly /*=false*/)
 {
-    // Is this jmp tail call?
-    if (endsWithJmpMethod(comp))
-    {
-        return true;
-    }
-#ifndef LEGACY_BACKEND
+    GenTreePtr tailCall = nullptr;
+    bool tailCallsConvertibleToLoopOnly = false;
+    return endsWithJmpMethod(comp) || endsWithTailCall(comp, fastTailCallsOnly, tailCallsConvertibleToLoopOnly, &tailCall);
+}
+
+//------------------------------------------------------------------------------
+// endsWithTailCall : Check if the block ends with a tail call.
+//
+// Arguments:
+//    comp                            - compiler instance
+//    fastTailCallsOnly               - check for fast tail calls only
+//    tailCallsConvertibleToLoopOnly  - check for tail calls convertible to loop only
+//    tailCall                        - a pointer to a tree that will be set to the call tree if the block
+//                                      ends with a tail call and will be set to nullptr otherwise.
+//
+// Return Value:
+//    true if the block ends with a tail call; false otherwise.
+//
+// Notes:
+//    At most one of fastTailCallsOnly and tailCallsConvertibleToLoopOnly flags can be true.
+
+inline bool BasicBlock::endsWithTailCall(Compiler* comp, bool fastTailCallsOnly, bool tailCallsConvertibleToLoopOnly, GenTree** tailCall)
+{
+    assert(!fastTailCallsOnly || !tailCallsConvertibleToLoopOnly);
+    *tailCall = nullptr;
+    bool result = false;
+
     // Is this a tail call?
     // The reason for keeping this under RyuJIT is so as not to impact existing Jit32 x86 and arm
     // targets.
-    else if (comp->compTailCallUsed)
+    if (comp->compTailCallUsed)
     {
-        bool result;
-        if (fastTailCallsOnly)
+        if (fastTailCallsOnly || tailCallsConvertibleToLoopOnly)
         {
-            // Only fast tail calls
+            // Only fast tail calls or only tail calls convertible to loops
             result = (bbFlags & BBF_HAS_JMP) && (bbJumpKind == BBJ_RETURN);
         }
         else
         {
-            // Both fast tail calls and tails calls dispatched via helper
+            // Fast tail calls, tail calls convertible to loops, and tails calls dispatched via helper
             result = (bbJumpKind == BBJ_THROW) || ((bbFlags & BBF_HAS_JMP) && (bbJumpKind == BBJ_RETURN));
         }
 
-
         if (result)
         {
-            GenTreePtr last = bbTreeList->gtPrev;
+            GenTreePtr last = comp->fgGetLastTopLevelStmt(this);
             assert(last != nullptr);
             last = last->gtStmt.gtStmtExpr;
+            if (last->OperGet() == GT_CALL)
+            {
+                GenTreeCall* call = last->AsCall();
+                if (tailCallsConvertibleToLoopOnly)
+                {
+                    result = call->IsTailCallConvertibleToLoop();
+                }
+                else if (fastTailCallsOnly)
+                {
+                    result = call->IsFastTailCall();
+                }
+                else
+                {
+                    result = call->IsTailCall();
+                }
 
-            return (last->OperGet() == GT_CALL) && (fastTailCallsOnly ? last->AsCall()->IsFastTailCall() : last->AsCall()->IsTailCall());
+                if (result)
+                {
+                    *tailCall = call;
+                }
+            }
+            else
+            {
+                result = false;
+            }
         }
     }
-#endif
 
-    return false;
+    return result;
+}
+
+//------------------------------------------------------------------------------
+// endsWithTailCallConvertibleToLoop : Check if the block ends with a tail call convertible to loop.
+//
+// Arguments:
+//    comp  -  compiler instance
+//    tailCall  -  a pointer to a tree that will be set to the call tree if the block
+//                 ends with a tail call convertible to loop and will be set to nullptr otherwise.
+//
+// Return Value:
+//    true if the block ends with a tail call convertible to loop.
+
+inline bool BasicBlock::endsWithTailCallConvertibleToLoop(Compiler* comp, GenTree** tailCall)
+{
+    bool fastTailCallsOnly = false;
+    bool tailCallsConvertibleToLoopOnly = true;
+    return endsWithTailCall(comp, fastTailCallsOnly, tailCallsConvertibleToLoopOnly, tailCall);
+}
+
+#endif // FEATURE_FASTTAILCALL
+
+// Returns the last top level stmt of a given basic block.
+// Returns nullptr if the block is empty.
+inline GenTreePtr Compiler::fgGetLastTopLevelStmt(BasicBlock *block)
+{
+    // Return if the block is empty
+    if (block->bbTreeList == nullptr)
+    {
+        return nullptr;
+    }
+
+    return fgFindTopLevelStmtBackwards(block->bbTreeList->gtPrev->AsStmt());
 }
 
 // Creates an InitBlk or CpBlk node.
@@ -4716,15 +4836,7 @@ inline GenTreeBlkOp* Compiler::gtCloneCpObjNode(GenTreeCpObj* source)
 
 inline static bool StructHasOverlappingFields(DWORD attribs)
 {
-#ifdef RYUJIT_CTPBUILD
-    // For older RYUJIT_CTPBUILD fix:
-    // We use the slightly pessimistic flag CORINFO_FLG_CUSTOMLAYOUT 
-    // This will always be set when we have any custom layout 
-    //
-    return ((attribs & CORINFO_FLG_CUSTOMLAYOUT) != 0);
-#else
     return ((attribs & CORINFO_FLG_OVERLAPPING_FIELDS) != 0);
-#endif
 }
 
 inline static bool StructHasCustomLayout(DWORD attribs)

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #ifndef ZAPPER_H_
 #define ZAPPER_H_
@@ -103,7 +102,7 @@ class Zapper
     CORINFO_ASSEMBLY_HANDLE m_hAssembly;
     IMDInternalImport      *m_pAssemblyImport;
 
-    WCHAR                   m_outputPath[MAX_PATH]; // Temp folder for creating the output file
+    WCHAR                   m_outputPath[MAX_LONGPATH]; // Temp folder for creating the output file
 
     IMetaDataAssemblyEmit  *m_pAssemblyEmit;
     IMetaDataAssemblyEmit  *CreateAssemblyEmitter();

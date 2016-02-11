@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -31,26 +32,11 @@ namespace System.IO {
     // cross-platform manner.  Most of the methods don't do a complete
     // full parsing (such as examining a UNC hostname), but they will
     // handle most string operations.  
-    // 
-    // File names cannot contain backslash (\), slash (/), colon (:),
-    // asterick (*), question mark (?), quote ("), less than (<;), 
-    // greater than (>;), or pipe (|).  The first three are used as directory
-    // separators on various platforms.  Asterick and question mark are treated
-    // as wild cards.  Less than, Greater than, and pipe all redirect input
-    // or output from a program to a file or some combination thereof.  Quotes
-    // are special.
-    // 
-    // We are guaranteeing that Path.SeparatorChar is the correct 
-    // directory separator on all platforms, and we will support 
-    // Path.AltSeparatorChar as well.  To write cross platform
-    // code with minimal pain, you can use slash (/) as a directory separator in
-    // your strings.
-     // Class contains only static data, no need to serialize
     [ComVisible(true)]
     public static class Path
     {
         // Platform specific directory separator character.  This is backslash
-        // ('\') on Windows, slash ('/') on Unix, and colon (':') on Mac.
+        // ('\') on Windows and slash ('/') on Unix.
         // 
 #if !PLATFORM_UNIX        
         public static readonly char DirectorySeparatorChar = '\\';
@@ -61,14 +47,9 @@ namespace System.IO {
 #endif // !PLATFORM_UNIX
         
         // Platform specific alternate directory separator character.  
-        // This is backslash ('\') on Unix, and slash ('/') on Windows 
-        // and MacOS.
-        // 
-#if !PLATFORM_UNIX        
+        // There is only one directory separator char on Unix, 
+        // so the same definition is used for both Unix and Windows.
         public static readonly char AltDirectorySeparatorChar = '/';
-#else
-        public static readonly char AltDirectorySeparatorChar = '\\';
-#endif // !PLATFORM_UNIX
     
         // Platform specific volume separator character.  This is colon (':')
         // on Windows and MacOS, and slash ('/') on Unix.  This is mostly
@@ -122,7 +103,12 @@ namespace System.IO {
         // Make this public sometime.
         // The max total path is 260, and the max individual component length is 255. 
         // For example, D:\<256 char file name> isn't legal, even though it's under 260 chars.
+#if !PLATFORM_UNIX
         internal static readonly int MaxPath = 260;
+#else
+        internal static readonly int MaxPath = 1024;
+#endif
+
         private static readonly int MaxDirectoryLength = 255;
 
         // Windows API definitions
@@ -234,7 +220,7 @@ namespace System.IO {
                     String dir = path.Substring(0, i);
 #if FEATURE_LEGACYNETCF
                     if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8) {                        
-                        if (dir.Length >= MAX_PATH - 1)
+                        if (dir.Length >= MaxPath - 1)
                             throw new PathTooLongException(Environment.GetResourceString("IO.PathTooLong"));
                     }                     
 #endif
@@ -269,7 +255,7 @@ namespace System.IO {
                 if (length >= 3 && (IsDirectorySeparator(path[2]))) i++;
             }
             return i;
-#else    
+#else
             if (length >= 1 && (IsDirectorySeparator(path[0]))) {
                 i = 1;
             }
@@ -798,13 +784,7 @@ namespace System.IO {
                 return null;  // Unreachable - silence a compiler error.
             }
 
-            String returnVal = newBuffer.ToString();
-            if (String.Equals(returnVal, path, StringComparison.Ordinal))
-            {
-                returnVal = path;
-            }
-            return returnVal;
-
+            return newBuffer.ToStringOrExisting(path);
         }
         internal const int MaxLongPath = 32000;
 
@@ -913,8 +893,8 @@ namespace System.IO {
 #if !FEATURE_CORECLR
             new EnvironmentPermission(PermissionState.Unrestricted).Demand();
 #endif
-            StringBuilder sb = new StringBuilder(MAX_PATH);
-            uint r = Win32Native.GetTempPath(MAX_PATH, sb);
+            StringBuilder sb = new StringBuilder(MaxPath);
+            uint r = Win32Native.GetTempPath(MaxPath, sb);
             String path = sb.ToString();
             if (r==0) __Error.WinIOError();
             path = GetFullPathInternal(path);
@@ -1011,7 +991,7 @@ namespace System.IO {
 #else
             new FileIOPermission(FileIOPermissionAccess.Write, path).Demand();
 #endif
-            StringBuilder sb = new StringBuilder(MAX_PATH);
+            StringBuilder sb = new StringBuilder(MaxPath);
             uint r = Win32Native.GetTempFileName(path, "tmp", 0, sb);
             if (r==0) __Error.WinIOError();
             return sb.ToString();

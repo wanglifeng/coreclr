@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -967,7 +968,7 @@ namespace System.IO {
         [System.Security.SecurityCritical]
         private static String InternalGetCurrentDirectory(bool checkHost)
         {
-            StringBuilder sb = StringBuilderCache.Acquire(Path.MAX_PATH + 1);
+            StringBuilder sb = StringBuilderCache.Acquire(Path.MaxPath + 1);
             if (Win32Native.GetCurrentDirectory(sb.Capacity, sb) == 0)
                 __Error.WinIOError();
             String currentDirectory = sb.ToString();
@@ -976,9 +977,9 @@ namespace System.IO {
             // this will return a short file name.
             if (currentDirectory.IndexOf('~') >= 0) {
                 int r = Win32Native.GetLongPathName(currentDirectory, sb, sb.Capacity);
-                if (r == 0 || r >= Path.MAX_PATH) {                    
+                if (r == 0 || r >= Path.MaxPath) {                    
                     int errorCode = Marshal.GetLastWin32Error();
-                    if (r >= Path.MAX_PATH)
+                    if (r >= Path.MaxPath)
                         errorCode = Win32Native.ERROR_FILENAME_EXCED_RANGE;
                     if (errorCode != Win32Native.ERROR_FILE_NOT_FOUND &&
                         errorCode != Win32Native.ERROR_PATH_NOT_FOUND &&
@@ -1017,7 +1018,7 @@ namespace System.IO {
             if (path.Length==0)
                 throw new ArgumentException(Environment.GetResourceString("Argument_PathEmpty"));
             Contract.EndContractBlock();
-            if (path.Length >= Path.MAX_PATH)
+            if (path.Length >= Path.MaxPath)
                 throw new PathTooLongException(Environment.GetResourceString("IO.PathTooLong"));
                 
             // This will have some large effects on the rest of the runtime

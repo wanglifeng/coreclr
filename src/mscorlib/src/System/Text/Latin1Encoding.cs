@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #if FEATURE_ENCODINGNLS
 namespace System.Text
@@ -43,7 +44,7 @@ namespace System.Text
         [System.Security.SecurityCritical]  // auto-generated_required
         void ISerializable.GetObjectData(SerializationInfo info, StreamingContext context)
         {
-            // Make sure to get teh base stuff too This throws if info is null
+            // Make sure to get the base stuff too This throws if info is null
             SerializeEncoding(info, context);
             Contract.Assert(info!=null, "[Latin1Encoding.GetObjectData] Expected null info to throw");
 

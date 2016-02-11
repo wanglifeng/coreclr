@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 // 
@@ -156,7 +155,7 @@ void ARM64Machine::Unassembly (
     char line[1024];
     ULONG lineNum;
     ULONG curLine = -1;
-    char fileName[MAX_PATH+1];
+    char fileName[MAX_PATH_FNAME+1];
     char *ptr;
     INT_PTR accumulatedConstant = 0;
     BOOL loBitsSet = FALSE;
@@ -202,7 +201,7 @@ void ARM64Machine::Unassembly (
         //
         // Print out line numbers if needed
         //
-        if (!bSuppressLines && SUCCEEDED(GetLineByOffset(TO_CDADDR(PC), &lineNum, fileName, MAX_PATH+1)))
+        if (!bSuppressLines && SUCCEEDED(GetLineByOffset(TO_CDADDR(PC), &lineNum, fileName, MAX_PATH_FNAME+1)))
         {
             if (lineNum != curLine)
             {

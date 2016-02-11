@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -94,10 +93,9 @@ namespace CorUnix
 
     Creates the Synchronization Manager. It must be called once per process.
     --*/
-    IPalSynchronizationManager * CPalSynchMgrController::CreatePalSynchronizationManager(
-        CPalThread *pthrCurrent)
+    IPalSynchronizationManager * CPalSynchMgrController::CreatePalSynchronizationManager()
     { 
-        return CPalSynchronizationManager::CreatePalSynchronizationManager(pthrCurrent);
+        return CPalSynchronizationManager::CreatePalSynchronizationManager();
     };
 
     /*++
@@ -120,21 +118,8 @@ namespace CorUnix
     needs to be carried out when core PAL subsystems are still active
     --*/
     PAL_ERROR CPalSynchMgrController::PrepareForShutdown()
-    {        
+    {
         return CPalSynchronizationManager::PrepareForShutdown();
-    }
-
-    /*++
-    Method:
-      CPalSynchMgrController::Shutdown
-
-    Synchronization Manager's final shutdown step
-    --*/
-    PAL_ERROR CPalSynchMgrController::Shutdown(
-        CPalThread *pthrCurrent,
-        bool fFullCleanup)
-    {        
-        return CPalSynchronizationManager::Shutdown(pthrCurrent, fFullCleanup);
     }
 
     //////////////////////////////////
@@ -817,7 +802,7 @@ namespace CorUnix
     Method:
       CPalSynchronizationManager::GetSynchControllersForObjects
 
-    Internal common impelmentation for GetSynchWaitControllersForObjects and 
+    Internal common implementation for GetSynchWaitControllersForObjects and 
     GetSynchStateControllersForObjects
     --*/
     PAL_ERROR CPalSynchronizationManager::GetSynchControllersForObjects(
@@ -1141,7 +1126,7 @@ namespace CorUnix
             psdSynchData = static_cast<CSynchData *>(pvSynchData);
         }
 
-        psdSynchData->Release(pthrCurrent);                        
+        psdSynchData->Release(pthrCurrent);
 
     FOSD_exit:
         return;
@@ -1423,11 +1408,11 @@ namespace CorUnix
                 ptainNode = ptainLocalHead;
                 ptainLocalHead = ptainNode->pNext;
 
-#if !_NO_DEBUG_MESSAGES_
+#if _ENABLE_DEBUG_MESSAGES_
                 // reset ENTRY nesting level back to zero while 
                 // inside the callback ... 
                 int iOldLevel = DBG_change_entrylevel(0);
-#endif /* !_NO_DEBUG_MESSAGES_ */
+#endif /* _ENABLE_DEBUG_MESSAGES_ */
 
                 TRACE("Calling APC %p with parameter %#x\n",
                       ptainNode->pfnAPC, ptainNode->pfnAPC);
@@ -1435,10 +1420,10 @@ namespace CorUnix
                 // Actual APC call
                 ptainNode->pfnAPC(ptainNode->pAPCData);
 
-#if !_NO_DEBUG_MESSAGES_
+#if _ENABLE_DEBUG_MESSAGES_
                 // ... and set nesting level back to what it was
                 DBG_change_entrylevel(iOldLevel);
-#endif /* !_NO_DEBUG_MESSAGES_ */
+#endif /* _ENABLE_DEBUG_MESSAGES_ */
 
                 iAPCsCalled++;
                 m_cacheThreadApcInfoNodes.Add(pthrCurrent, ptainNode);
@@ -1487,13 +1472,12 @@ namespace CorUnix
     Creates the Synchronization Manager.
     Private method, it is called only by CPalSynchMgrController.
     --*/
-    IPalSynchronizationManager * CPalSynchronizationManager::CreatePalSynchronizationManager(
-        CPalThread *pthrCurrent)
+    IPalSynchronizationManager * CPalSynchronizationManager::CreatePalSynchronizationManager()
     { 
-        IPalSynchronizationManager * pRet = NULL;    
+        IPalSynchronizationManager * pRet = NULL;
         if (s_pObjSynchMgr == NULL)
         {
-            Initialize(pthrCurrent);
+            Initialize();
             pRet = static_cast<IPalSynchronizationManager *>(s_pObjSynchMgr);
         }
         else
@@ -1510,9 +1494,8 @@ namespace CorUnix
 
     Internal Synchronization Manager initialization
     --*/
-    PAL_ERROR CPalSynchronizationManager::Initialize(
-        CPalThread *pthrCurrent)
-    {        
+    PAL_ERROR CPalSynchronizationManager::Initialize()
+    {
         PAL_ERROR palErr = NO_ERROR;
         LONG lInit;
         CPalSynchronizationManager * pSynchManager = NULL;
@@ -1530,7 +1513,7 @@ namespace CorUnix
         InternalInitializeCriticalSection(&s_csSynchProcessLock);
         InternalInitializeCriticalSection(&s_csMonitoredProcessesLock);        
         
-        pSynchManager = InternalNew<CPalSynchronizationManager>(pthrCurrent);
+        pSynchManager = InternalNew<CPalSynchronizationManager>();
         if (NULL == pSynchManager)
         {
             ERROR("Failed to allocate memory for Synchronization Manager");
@@ -1538,7 +1521,7 @@ namespace CorUnix
             goto I_exit;
         }
 
-        if (!pSynchManager->CreateProcessPipe(pthrCurrent))
+        if (!pSynchManager->CreateProcessPipe())
         {
             ERROR("Unable to create process pipe \n");
             palErr = ERROR_OPEN_FAILED;
@@ -1548,8 +1531,8 @@ namespace CorUnix
         s_pObjSynchMgr = pSynchManager;
 
         // Initialization was successful
-        g_pSynchronizationManager = 
-            static_cast<IPalSynchronizationManager *>(pSynchManager);                    
+        g_pSynchronizationManager =
+            static_cast<IPalSynchronizationManager *>(pSynchManager);
         s_lInitStatus = (LONG)SynchMgrStatusRunning;
         
     I_exit:
@@ -1558,13 +1541,13 @@ namespace CorUnix
             s_lInitStatus = (LONG)SynchMgrStatusError;
             if (NULL != pSynchManager)
             {
-                pSynchManager->ShutdownProcessPipe(pthrCurrent);
+                pSynchManager->ShutdownProcessPipe();
             }
             s_pObjSynchMgr = NULL;
             g_pSynchronizationManager = NULL;
-            InternalDelete(pthrCurrent, pSynchManager);
+            InternalDelete(pSynchManager);
         }
-        
+
         return palErr;
     }
 
@@ -1661,13 +1644,13 @@ namespace CorUnix
                    SynchMgrStatusRunning, lInit);
             // We intentionally not set s_lInitStatus to SynchMgrStatusError
             // cause this could interfere with a previous thread already 
-            // executing shutdown            
+            // executing shutdown
             palErr = ERROR_INTERNAL_ERROR;
             goto PFS_exit;
         }
 
         // Discard process monitoring for process waits
-        pSynchManager->DiscardMonitoredProcesses(pthrCurrent);        
+        pSynchManager->DiscardMonitoredProcesses(pthrCurrent);
 
         if (NULL == pSynchManager->m_pipoThread)
         {
@@ -1676,10 +1659,9 @@ namespace CorUnix
             // sometime after having called CreatePalSynchronizationManager,
             // but before calling StartWorker. Nothing else to do here.
             goto PFS_exit;
-        }            
+        }
 
-        palErr = pSynchManager->WakeUpLocalWorkerThread(pthrCurrent, 
-                                                        SynchWorkerCmdShutdown);
+        palErr = pSynchManager->WakeUpLocalWorkerThread(SynchWorkerCmdShutdown);
         if (NO_ERROR != palErr)
         {
             ERROR("Failed stopping worker thread [palErr=%u]\n", palErr);
@@ -1697,7 +1679,7 @@ namespace CorUnix
             ERROR("Failed to convert timeout to absolute timeout\n");
             s_lInitStatus = SynchMgrStatusError;
             goto PFS_exit;
-        }            
+        }
 
         // Using the worker thread's predicate/condition/mutex
         // to wait for worker thread to be done
@@ -1823,56 +1805,6 @@ namespace CorUnix
             s_lInitStatus = SynchMgrStatusReadyForProcessShutDown;
         }
             
-        return palErr;
-    }
-
-    /*++
-    Method:
-      CPalSynchronizationManager::Shutdown
-
-    Synchronization Manager's final shutdown step.
-    Private method, it is called only by CPalSynchMgrController.
-    --*/
-    PAL_ERROR CPalSynchronizationManager::Shutdown(
-        CPalThread *pthrCurrent,
-        bool fFullCleanup)
-    {        
-        PAL_ERROR palErr = NO_ERROR;
-        CPalSynchronizationManager * pSynchManager = GetInstance();
-
-        if ((LONG)SynchMgrStatusReadyForProcessShutDown != s_lInitStatus)
-        {
-            _ASSERT_MSG((LONG)SynchMgrStatusRunning != s_lInitStatus,
-                        "Synchronization Manager: Shutdown called with no "
-                        "prior PrepareForShutdown call");
-            
-            ERROR("Unexpected initialization status found "
-                  "in Shutdown [expected=%d current=%d]\n", 
-                  (int)SynchMgrStatusShuttingDown, s_lInitStatus.Load());
-            palErr = ERROR_INTERNAL_ERROR;
-            goto S_exit;
-        }
-
-        pSynchManager->m_cacheSHRSynchData.Flush(pthrCurrent);
-        pSynchManager->m_cacheSHRWTListNodes.Flush(pthrCurrent);
-
-        if (fFullCleanup)
-        {
-            pSynchManager->m_cacheWaitCtrlrs.Flush(pthrCurrent);
-            pSynchManager->m_cacheStateCtrlrs.Flush(pthrCurrent);
-            pSynchManager->m_cacheSynchData.Flush(pthrCurrent);
-            pSynchManager->m_cacheWTListNodes.Flush(pthrCurrent);
-            pSynchManager->m_cacheThreadApcInfoNodes.Flush(pthrCurrent);
-            pSynchManager->m_cacheOwnedObjectsListNodes.Flush(pthrCurrent);
-
-            InternalDeleteCriticalSection(&s_csSynchProcessLock);            
-            InternalDeleteCriticalSection(&s_csMonitoredProcessesLock);            
-        }
-                   
-        s_lInitStatus = (LONG)SynchMgrStatusIdle;
-        s_pObjSynchMgr = NULL;
-        
-    S_exit:        
         return palErr;
     }
 
@@ -2103,7 +2035,7 @@ namespace CorUnix
                     // be read). That will allow the worker thread to process 
                     // possible commands already successfully written to the 
                     // pipe by some other process, before shutting down.
-                    pSynchManager->ShutdownProcessPipe(pthrWorker);
+                    pSynchManager->ShutdownProcessPipe();
 
                     // Shutting down: this will cause the worker thread to
                     // fetch residual cmds from the process pipe until an
@@ -2619,7 +2551,7 @@ namespace CorUnix
             // If the array is full, add the target thread object at the end 
             // of the overflow list
             DeferredSignalingListNode * pdsln = 
-                InternalNew<DeferredSignalingListNode>(pthrCurrent);
+                InternalNew<DeferredSignalingListNode>();
 
             if (pdsln)
             {
@@ -2962,7 +2894,7 @@ namespace CorUnix
 
         _ASSERT_MSG(fRet, "Failed to retrieve process pipe's name!\n");
 
-        iProcessPipe = InternalOpen(pthrCurrent, strPipeFilename, O_WRONLY);
+        iProcessPipe = InternalOpen(strPipeFilename, O_WRONLY);
         if (-1 == iProcessPipe)
         {
             ERROR("Unable to open a process pipe to wake up a remote thread "
@@ -3022,7 +2954,6 @@ namespace CorUnix
     process pipe.
     --*/
     PAL_ERROR CPalSynchronizationManager::WakeUpLocalWorkerThread(
-        CPalThread * pthrCurrent,
         SynchWorkerCmd swcWorkerCmd)
     {
         PAL_ERROR palErr = NO_ERROR;
@@ -3438,10 +3369,10 @@ namespace CorUnix
         }
         else
         {
-            pmpln = InternalNew<MonitoredProcessesListNode>(pthrCurrent);
+            pmpln = InternalNew<MonitoredProcessesListNode>();
             if (NULL == pmpln)
             {
-                ERROR("No memory to allocate MonitoredProcessesListNode structure\n");            
+                ERROR("No memory to allocate MonitoredProcessesListNode structure\n");
                 palErr = ERROR_NOT_ENOUGH_MEMORY; 
                 goto RPFM_exit;
             }
@@ -3452,7 +3383,7 @@ namespace CorUnix
             pmpln->pProcLocalData = pProcLocalData;
 
             // Acquire SynchData and AddRef it
-            pmpln->psdSynchData = psdSynchData;            
+            pmpln->psdSynchData = psdSynchData;
             psdSynchData->AddRef();
             
             pmpln->pNext = m_pmplnMonitoredProcesses;
@@ -3470,8 +3401,7 @@ namespace CorUnix
         {
             CPalSynchronizationManager * pSynchManager = GetInstance();
 
-            palErr = pSynchManager->WakeUpLocalWorkerThread(pthrCurrent, 
-                                                            SynchWorkerCmdNop);
+            palErr = pSynchManager->WakeUpLocalWorkerThread(SynchWorkerCmdNop);
             if (NO_ERROR != palErr)
             {
                 ERROR("Failed waking up worker thread for process "
@@ -3541,7 +3471,7 @@ namespace CorUnix
 
                 m_lMonitoredProcessesCount--;
                 pmpln->psdSynchData->Release(pthrCurrent);                
-                InternalDelete(pthrCurrent, pmpln);
+                InternalDelete(pmpln);
             }
         }
         else
@@ -3749,7 +3679,7 @@ namespace CorUnix
                 pNode->psdSynchData->Release(pthrCurrent);
 
                 // Delete the node
-                InternalDelete(pthrCurrent, pNode);
+                InternalDelete(pNode);
 
                 // Go to the next
                 pNode = pNext;
@@ -3799,7 +3729,7 @@ namespace CorUnix
             pNode = m_pmplnMonitoredProcesses;
             m_pmplnMonitoredProcesses = pNode->pNext;
             pNode->psdSynchData->Release(pthrCurrent);
-            InternalDelete(pthrCurrent, pNode);
+            InternalDelete(pNode);
         }
 
         // Release the monitored processes lock
@@ -3813,8 +3743,7 @@ namespace CorUnix
 
     Creates the process pipe for the current process
     --*/
-    bool CPalSynchronizationManager::CreateProcessPipe(
-        CPalThread * pthrCurrent)
+    bool CPalSynchronizationManager::CreateProcessPipe()
     {
         bool fRet = true;
 #if HAVE_KQUEUE && !HAVE_BROKEN_FIFO_KEVENT
@@ -3841,7 +3770,7 @@ namespace CorUnix
             {
                 /* Some how no one deleted the pipe, perhaps it was left behind
                 from a crash?? Delete the pipe and try again. */
-                if ( -1 == InternalUnlink( pthrCurrent, szPipeFilename ) )
+                if ( -1 == unlink( szPipeFilename ) )
                 {
                     ERROR( "Unable to delete the process pipe that was left behind.\n" );
                     fRet = false;
@@ -3865,7 +3794,7 @@ namespace CorUnix
             }
         }
 
-        iPipeRd = InternalOpen(pthrCurrent, szPipeFilename, O_RDONLY | O_NONBLOCK);
+        iPipeRd = InternalOpen(szPipeFilename, O_RDONLY | O_NONBLOCK);
         if (iPipeRd == -1)
         {
             ERROR("Unable to open the process pipe for read\n");
@@ -3873,7 +3802,7 @@ namespace CorUnix
             goto CPP_exit;
         }
 
-        iPipeWr = InternalOpen(pthrCurrent, szPipeFilename, O_WRONLY | O_NONBLOCK);
+        iPipeWr = InternalOpen(szPipeFilename, O_WRONLY | O_NONBLOCK);
         if (iPipeWr == -1)
         {
             ERROR("Unable to open the process pipe for write\n");
@@ -3921,7 +3850,7 @@ namespace CorUnix
             // Failed
             if (0 != szPipeFilename[0])
             {
-                InternalUnlink(pthrCurrent, szPipeFilename);
+                unlink(szPipeFilename);
             }
             if (-1 != iPipeRd)
             {
@@ -3955,22 +3884,21 @@ namespace CorUnix
 
     Shuts down the process pipe and removes the fifo so that other processes
     can no longer open it. It also closes the local write end of the pipe (see
-    comment below). From this moment on the worker thread will process any 
+    comment below). From this moment on the worker thread will process any
     possible data already received in the pipe (but not yet consumed) and any
-    data written by processes that still have a opened write end of this pipe; 
+    data written by processes that still have a opened write end of this pipe;
     it will wait (with timeout) until the last remote process which has a write
-    end opened closes it, and then it will yield to process shutdown    
+    end opened closes it, and then it will yield to process shutdown.
     --*/
-    PAL_ERROR CPalSynchronizationManager::ShutdownProcessPipe(
-        CPalThread *pthrCurrent)
+    PAL_ERROR CPalSynchronizationManager::ShutdownProcessPipe()
     {
-        PAL_ERROR palErr = NO_ERROR;        
+        PAL_ERROR palErr = NO_ERROR;
 #ifndef CORECLR
         char szPipeFilename[MAX_PATH];
 
         if(GetProcessPipeName(szPipeFilename, MAX_PATH, gPID))
         {
-            if (InternalUnlink(pthrCurrent, szPipeFilename) == -1)
+            if (unlink(szPipeFilename) == -1)
             {
                 ERROR("Unable to unlink the pipe file name errno=%d (%s)\n", 
                       errno, strerror(errno));
@@ -4126,7 +4054,7 @@ namespace CorUnix
         {
             int i;
 
-            rgshridWTLNodes = InternalNewArray<SharedID>(pthrCurrent, ulcWaitingThreads);
+            rgshridWTLNodes = InternalNewArray<SharedID>(ulcWaitingThreads);
             if (NULL == rgshridWTLNodes)
             {
                 palError = ERROR_OUTOFMEMORY;
@@ -4335,7 +4263,7 @@ namespace CorUnix
 
         if (NULL != rgshridWTLNodes)
         {
-            InternalDeleteArray(pthrCurrent, rgshridWTLNodes);
+            InternalDeleteArray(rgshridWTLNodes);
         }
 
         return palError;
@@ -4643,8 +4571,7 @@ namespace CorUnix
 
     Carries out all the pending condition signalings for the current thread.
     --*/
-    PAL_ERROR CThreadSynchronizationInfo::RunDeferredThreadConditionSignalings(
-        CPalThread * pthrCurrent)
+    PAL_ERROR CThreadSynchronizationInfo::RunDeferredThreadConditionSignalings()
     {
         PAL_ERROR palErr = NO_ERROR;
 
@@ -4657,15 +4584,6 @@ namespace CorUnix
             LONG lIdx = 0;
             PAL_ERROR palTempErr;
 
-            // Make sure we are going to run deferred condition signalings 
-            // from a thread suspension safe area.
-            if (!pthrCurrent->suspensionInfo.IsSuspensionStateSafe())
-            {
-                ERROR("Signaling condition from within thread suspension unsafe "
-                      "area. The calling code is probably holding a PAL internal "
-                      "lock. This may cause deadlocks.\n");
-            }
-
             // Signal all the pending signalings from the array
             for (lIdx = 0; lIdx < lArrayPendingSignalingCount; lIdx++)
             {
@@ -4674,7 +4592,7 @@ namespace CorUnix
                     m_rgpthrPendingSignalings[lIdx]->synchronizationInfo.GetNativeData());
                 if (NO_ERROR != palTempErr)
                 {
-                    palErr = palTempErr;                    
+                    palErr = palTempErr;
                 }
 
                 // Release the thread reference
@@ -4709,7 +4627,7 @@ namespace CorUnix
                     pdsln->pthrTarget->ReleaseThreadReference();
 
                     // Delete the node
-                    InternalDelete(pthrCurrent, pdsln);
+                    InternalDelete(pdsln);
 
                     lIdx += 1;
                 }

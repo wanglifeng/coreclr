@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // Various helper routines for generating AMD64 assembly code.
 //
@@ -323,8 +322,16 @@ void HijackFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
 
     UpdateRegDisplayFromCalleeSavedRegisters(pRD, &(m_Args->Regs));
 
+#ifdef UNIX_AMD64_ABI
+    pRD->pCurrentContextPointers->Rsi = NULL;
+    pRD->pCurrentContextPointers->Rdi = NULL;
+#endif
     pRD->pCurrentContextPointers->Rcx = NULL;
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+    pRD->pCurrentContextPointers->Rdx = (PULONG64)&m_Args->Rdx;
+#else // FEATURE_UNIX_AMD64_STRUCT_PASSING
     pRD->pCurrentContextPointers->Rdx = NULL;
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
     pRD->pCurrentContextPointers->R8  = NULL;
     pRD->pCurrentContextPointers->R9  = NULL;
     pRD->pCurrentContextPointers->R10 = NULL;
@@ -866,6 +873,7 @@ EXTERN_C PCODE VirtualMethodFixupWorker(TransitionBlock * pTransitionBlock, CORC
         pEMFrame->SetFunction(pMD);   //  We will use the pMD to enumerate the GC refs in the arguments 
         pEMFrame->Push(CURRENT_THREAD);
 
+        INSTALL_MANAGED_EXCEPTION_DISPATCHER;
         INSTALL_UNWIND_AND_CONTINUE_HANDLER_NO_PROBE;
 
         // Skip fixup precode jump for better perf
@@ -892,6 +900,7 @@ EXTERN_C PCODE VirtualMethodFixupWorker(TransitionBlock * pTransitionBlock, CORC
         }
         
         UNINSTALL_UNWIND_AND_CONTINUE_HANDLER_NO_PROBE;
+        UNINSTALL_MANAGED_EXCEPTION_DISPATCHER;
         pEMFrame->Pop(CURRENT_THREAD);
     }
 

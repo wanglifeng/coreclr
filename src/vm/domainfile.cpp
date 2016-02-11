@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // --------------------------------------------------------------------------------
 // DomainFile.cpp
 //
@@ -38,6 +37,10 @@
 #include "policy.h" // for fusion::util::isanyframeworkassembly
 #endif
 #include "winrthelpers.h"
+
+#ifdef FEATURE_PERFMAP
+#include "perfmap.h"
+#endif // FEATURE_PERFMAP
 
 BOOL DomainAssembly::IsUnloading()
 {
@@ -897,6 +900,7 @@ BOOL DomainFile::IsZapRequired()
         g_pConfig->RequireZaps() == EEConfig::REQUIRE_ZAPS_SUPPORTED)
         return FALSE;
 
+#ifdef FEATURE_NATIVE_IMAGE_GENERATION
     if (IsCompilationProcess())
     {
         // Ignore the assembly being ngened.
@@ -919,6 +923,7 @@ BOOL DomainFile::IsZapRequired()
         if (fileIsBeingNGened)
             return FALSE;
     }
+#endif
 
     return TRUE;
 }
@@ -997,6 +1002,7 @@ void DomainFile::ClearNativeImageStress()
     // Different app-domains should make different decisions
     hash ^= HashString(this->GetAppDomain()->GetFriendlyName());
 
+#ifdef FEATURE_NATIVE_IMAGE_GENERATION
     // Since DbgRandomOnHashAndExe() is not so random under ngen.exe, also
     // factor in the module being compiled
     if (this->GetAppDomain()->IsCompilationDomain())
@@ -1006,6 +1012,7 @@ void DomainFile::ClearNativeImageStress()
         if (module)
             hash ^= HashStringA(module->GetSimpleName());
     }
+#endif
 
     if (DbgRandomOnHashAndExe(hash, float(stressPercentage)/100))
     {
@@ -1298,6 +1305,11 @@ void DomainFile::FinishLoad()
         // Inform metadata that it has been loaded from a native image
         // (and so there was an opportunity to check for or fix inconsistencies in the original IL metadata)
         m_pFile->GetMDImport()->SetVerifiedByTrustedSource(TRUE);
+
+#ifdef FEATURE_PERFMAP
+        // Notify the perfmap of the native image load.
+        PerfMap::LogNativeImageLoad(m_pFile);
+#endif
     }
 
     // Are we absolutely required to use a native image?
@@ -3279,7 +3291,7 @@ void DomainAssembly::GetCurrentVersionInfo(CORCOMPILE_VERSION_INFO *pNativeVersi
     // pNativeVersionInfo->wOSMajorVersion = (WORD) osInfo.dwMajorVersion;
     pNativeVersionInfo->wOSMajorVersion = 4;
 
-    pNativeVersionInfo->wMachine = IMAGE_FILE_MACHINE_NATIVE;
+    pNativeVersionInfo->wMachine = IMAGE_FILE_MACHINE_NATIVE_NI;
 
     pNativeVersionInfo->wVersionMajor = VER_MAJORVERSION;
     pNativeVersionInfo->wVersionMinor = VER_MINORVERSION;

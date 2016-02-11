@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=====================================================================
 **
@@ -20,20 +19,22 @@
 #include <palsuite.h>
 
 /* this cleanup method tries to revert the file back to its initial attributes */
-void do_cleanup(WCHAR* filename,DWORD attributes)
+void do_cleanup(WCHAR* filename, DWORD attributes)
 {
-  DWORD result;
-  result = SetFileAttributes(filename, attributes);
-  if (result == 0)
-	  {	Fail("ERROR:SetFileAttributesW returned 0,failure in the do_cleanup "
-		     "method when trying to revert the file back to its initial attributes");
-	  }
+    DWORD result;
+    result = SetFileAttributes(filename, attributes);
+    if (result == 0)
+    {
+        Fail("ERROR:SetFileAttributesW returned 0,failure in the do_cleanup "
+             "method when trying to revert the file back to its initial attributes (%u)", GetLastError());
+    }
 }
 
 int __cdecl main(int argc, char **argv)
 {
     DWORD TheResult;
 	DWORD initialAttr;
+    CHAR *FileName_Multibyte = "test_file";
     WCHAR FileName[MAX_PATH];
     
     if (0 != PAL_Initialize(argc,argv))
@@ -41,11 +42,27 @@ int __cdecl main(int argc, char **argv)
         return FAIL;
     }
     
+    // Create the test file
+    FILE *testFile = fopen(FileName_Multibyte, "w");
+    if (testFile == NULL)
+    {
+        Fail("Unexpected error: Unable to open file %S with fopen. \n", FileName);
+    }
+    if (fputs("testing", testFile) == EOF)
+    {
+        Fail("Unexpected error: Unable to write to file %S with fputs. \n", FileName);
+    }
+    if (fclose(testFile) != 0)
+    {
+        Fail("Unexpected error: Unable to close file %S with fclose. \n", FileName);
+    }
+    testFile = NULL;
+
     /* Make a wide character string for the file name */
     
     MultiByteToWideChar(CP_ACP,
                         0,
-                        "test_file",
+                        FileName_Multibyte,
                         -1,
                         FileName,
                         MAX_PATH);

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #ifndef STUBLINKERX86_H_
 #define STUBLINKERX86_H_
@@ -772,25 +771,9 @@ struct ThisPtrRetBufPrecode {
         return m_pMethodDesc;
     }
 
-    PCODE GetTarget()
-    { 
-        LIMITED_METHOD_DAC_CONTRACT;
+    PCODE GetTarget();
 
-        return rel32Decode(PTR_HOST_MEMBER_TADDR(ThisPtrRetBufPrecode, this, m_rel32));
-    }
-
-    BOOL SetTargetInterlocked(TADDR target, TADDR expected)
-    {
-        CONTRACTL
-        {
-            THROWS;
-            GC_TRIGGERS;
-        }
-        CONTRACTL_END;
-
-        EnsureWritableExecutablePages(&m_rel32);
-        return rel32SetInterlocked(&m_rel32, target, expected, (MethodDesc*)GetMethodDesc());
-    }
+    BOOL SetTargetInterlocked(TADDR target, TADDR expected);
 };
 IN_WIN32(static_assert_no_msg(offsetof(ThisPtrRetBufPrecode, m_movArg1Scratch) + 1 == OFFSETOF_PRECODE_TYPE);)
 typedef DPTR(ThisPtrRetBufPrecode) PTR_ThisPtrRetBufPrecode;

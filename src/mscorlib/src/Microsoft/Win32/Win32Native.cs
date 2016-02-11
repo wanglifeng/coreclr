@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -696,13 +697,14 @@ namespace Microsoft.Win32 {
         internal const String KERNEL32 = "kernel32.dll";
         internal const String USER32   = "user32.dll";
         internal const String OLE32    = "ole32.dll";
+        internal const String OLEAUT32 = "oleaut32.dll";
 #else //FEATURE_PAL
         internal const String KERNEL32 = "libcoreclr";
         internal const String USER32   = "libcoreclr";
         internal const String OLE32    = "libcoreclr";
+        internal const String OLEAUT32 = "libcoreclr";
 #endif //FEATURE_PAL         
         internal const String ADVAPI32 = "advapi32.dll";
-        internal const String OLEAUT32 = "oleaut32.dll";
         internal const String SHELL32  = "shell32.dll";
         internal const String SHIM     = "mscoree.dll";
         internal const String CRYPT32  = "crypt32.dll";
@@ -829,11 +831,19 @@ namespace Microsoft.Win32 {
         [DllImport(KERNEL32, CharSet=CharSet.Unicode, ExactSpelling=true, EntryPoint="lstrlenW")]
         internal static extern int lstrlenW(IntPtr ptr);
 
-#if FEATURE_COMINTEROP
-        [DllImport(Win32Native.OLEAUT32, CharSet=CharSet.Unicode)]
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]            
+        [DllImport(Win32Native.OLEAUT32, CharSet = CharSet.Unicode)]
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
         internal static extern IntPtr SysAllocStringLen(String src, int len);  // BSTR
 
+        [DllImport(Win32Native.OLEAUT32)]
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
+        internal static extern uint SysStringLen(IntPtr bstr);
+
+        [DllImport(Win32Native.OLEAUT32)]
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
+        internal static extern void SysFreeString(IntPtr bstr);
+
+#if FEATURE_COMINTEROP
         [DllImport(Win32Native.OLEAUT32)]
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]            
         internal static extern IntPtr SysAllocStringByteLen(byte[] str, uint len);  // BSTR
@@ -844,15 +854,7 @@ namespace Microsoft.Win32 {
 
         [DllImport(Win32Native.OLEAUT32)]
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
-        internal static extern uint SysStringLen(IntPtr bstr);
-
-        [DllImport(Win32Native.OLEAUT32)]
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
         internal static extern uint SysStringLen(SafeBSTRHandle bstr);
-
-        [DllImport(Win32Native.OLEAUT32)]
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
-        internal static extern void SysFreeString(IntPtr bstr);
 #endif
 
         [DllImport(KERNEL32)]
@@ -1043,6 +1045,9 @@ namespace Microsoft.Win32 {
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool ReleaseSemaphore(SafeWaitHandle handle, int releaseCount, out int previousCount);
+
+        [DllImport(KERNEL32, SetLastError = true, CharSet = CharSet.Auto, BestFitMapping = false)]
+        internal static extern SafeWaitHandle OpenSemaphore(/* DWORD */ int desiredAccess, bool inheritHandle, String name);
 
         // Will be in winnls.h
         internal const int FIND_STARTSWITH  = 0x00100000; // see if value is at the beginning of source

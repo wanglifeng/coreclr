@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -24,11 +23,10 @@ BOOL ResetEventTest()
     LPSECURITY_ATTRIBUTES lpEventAttributes = 0;
     BOOL bManualReset = TRUE; 
     BOOL bInitialState = TRUE;
-    LPCTSTR lpName = "Event #4";
 
     /* Create an Event, ensure it is valid */
     HANDLE hEvent = CreateEvent( lpEventAttributes, 
-                                 bManualReset, bInitialState, lpName); 
+                                 bManualReset, bInitialState, NULL); 
     
     if (hEvent != INVALID_HANDLE_VALUE)
     {
@@ -40,8 +38,7 @@ BOOL ResetEventTest()
 
         if (dwRet != WAIT_OBJECT_0)
         {
-            Fail("ResetEventTest:WaitForSingleObject %s "
-                   "failed (%x)\n",lpName,GetLastError());
+            Fail("ResetEventTest:WaitForSingleObject failed (%x)\n", GetLastError());
         }
         else
         {
@@ -50,8 +47,7 @@ BOOL ResetEventTest()
 
             if (!bRet)
             {
-                Fail("ResetEventTest:ResetEvent %s failed "
-                       "(%x)\n",lpName,GetLastError());
+                Fail("ResetEventTest:ResetEvent failed (%x)\n", GetLastError());
             }
             else
             {
@@ -62,8 +58,7 @@ BOOL ResetEventTest()
 
                 if (dwRet != WAIT_TIMEOUT)
                 {
-                    Fail("ResetEventTest:WaitForSingleObject "
-                           "%s failed (%x)\n",lpName,GetLastError());
+                    Fail("ResetEventTest:WaitForSingleObject %s failed (%x)\n", GetLastError());
                 }
                 else
                 {
@@ -71,8 +66,7 @@ BOOL ResetEventTest()
 
                     if (!bRet)
                     {
-                        Fail("ResetEventTest:CloseHandle %s failed"
-                               "(%x)\n",lpName,GetLastError());
+                        Fail("ResetEventTest:CloseHandle failed (%x)\n", GetLastError());
                     }
                 }
             }
@@ -80,8 +74,7 @@ BOOL ResetEventTest()
     }
     else
     {
-        Fail("ResetEventTest:CreateEvent %s failed "
-               "(%x)\n",lpName,GetLastError());
+        Fail("ResetEventTest:CreateEvent failed (%x)\n", GetLastError());
     }
     
     return bRet;

@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 /*=============================================================================
@@ -52,10 +53,17 @@ namespace System.Threading
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
         public unsafe Mutex(bool initiallyOwned, String name, out bool createdNew, MutexSecurity mutexSecurity)
         {
-            if(null != name && System.IO.Path.MAX_PATH < name.Length)
+            if (name != null)
             {
-                throw new ArgumentException(Environment.GetResourceString("Argument_WaitHandleNameTooLong",name));
-            }            
+#if PLATFORM_UNIX
+                throw new PlatformNotSupportedException(Environment.GetResourceString("PlatformNotSupported_NamedSynchronizationPrimitives"));
+#else
+                if (System.IO.Path.MaxPath < name.Length)
+                {
+                    throw new ArgumentException(Environment.GetResourceString("Argument_WaitHandleNameTooLong", name));
+                }
+#endif
+            }
             Contract.EndContractBlock();
             Win32Native.SECURITY_ATTRIBUTES secAttrs = null;
 #if FEATURE_MACL
@@ -79,9 +87,16 @@ namespace System.Threading
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
         internal Mutex(bool initiallyOwned, String name, out bool createdNew, Win32Native.SECURITY_ATTRIBUTES secAttrs) 
         {
-            if (null != name && Path.MAX_PATH < name.Length) 
+            if (name != null)
             {
-                throw new ArgumentException(Environment.GetResourceString("Argument_WaitHandleNameTooLong", name));
+#if PLATFORM_UNIX
+                throw new PlatformNotSupportedException(Environment.GetResourceString("PlatformNotSupported_NamedSynchronizationPrimitives"));
+#else
+                if (System.IO.Path.MaxPath < name.Length)
+                {
+                    throw new ArgumentException(Environment.GetResourceString("Argument_WaitHandleNameTooLong", name));
+                }
+#endif
             }
             Contract.EndContractBlock();
 
@@ -321,6 +336,9 @@ namespace System.Threading
         [System.Security.SecurityCritical]
         private static OpenExistingResult OpenExistingWorker(string name, MutexRights rights, out Mutex result)
         {
+#if PLATFORM_UNIX
+            throw new PlatformNotSupportedException(Environment.GetResourceString("PlatformNotSupported_NamedSynchronizationPrimitives"));
+#else
             if (name == null)
             {
                 throw new ArgumentNullException("name", Environment.GetResourceString("ArgumentNull_WithParamName"));
@@ -330,7 +348,7 @@ namespace System.Threading
             {
                 throw new ArgumentException(Environment.GetResourceString("Argument_EmptyName"), "name");
             }
-            if(System.IO.Path.MAX_PATH < name.Length)
+            if(System.IO.Path.MaxPath < name.Length)
             {
                 throw new ArgumentException(Environment.GetResourceString("Argument_WaitHandleNameTooLong",name));
             }
@@ -371,6 +389,7 @@ namespace System.Threading
 
             result = new Mutex(myHandle);
             return OpenExistingResult.Success;
+#endif
         }
 
         // Note: To call ReleaseMutex, you must have an ACL granting you

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // ZapInfo.cpp
 //
@@ -1461,6 +1460,13 @@ void ZapInfo::getGSCookie(GSCookie * pCookieVal, GSCookie ** ppCookieVal)
         offsetof(CORCOMPILE_EE_INFO_TABLE, gsCookie));
 }
 
+DWORD ZapInfo::getJitFlags(CORJIT_FLAGS* jitFlags, DWORD sizeInBytes)
+{
+    _ASSERTE(jitFlags != NULL);
+
+    return 0;
+}
+
 IEEMemoryManager* ZapInfo::getMemoryManager()
 {
     return GetEEMemoryManager();
@@ -1598,7 +1604,7 @@ HRESULT ZapInfo::getBBProfileData (
     _ASSERTE(foundEntry->md == md); 
 
     //
-    // We found the md. Let's retrive the profile data.
+    // We found the md. Let's retrieve the profile data.
     //
     _ASSERTE(foundEntry->pos > 0);                                   // The target position cannot be 0.
     _ASSERTE(foundEntry->size >= sizeof(CORBBTPROF_METHOD_HEADER));   // The size must at least this
@@ -1768,8 +1774,19 @@ void ZapInfo::allocMem(
 
     if (roDataSize > 0)
     {
-        m_pROData = ZapBlobWithRelocs::NewAlignedBlob(m_pImage, NULL, roDataSize,
-            optForSize || (roDataSize < 8) ? sizeof(TADDR) : 8);
+        if (flag & CORJIT_ALLOCMEM_FLG_RODATA_16BYTE_ALIGN)
+        {
+            align = 16;
+        }
+        else if (optForSize || (roDataSize < 8))
+        {
+            align = sizeof(TADDR);
+        }
+        else
+        {
+            align = 8;
+        }
+        m_pROData = ZapBlobWithRelocs::NewAlignedBlob(m_pImage, NULL, roDataSize, align);
         *roDataBlock = m_pROData->GetData();
     }
 
@@ -2644,7 +2661,8 @@ void ZapInfo::getFunctionEntryPoint(
 {
     if (IsReadyToRunCompilation())
     {
-        _ASSERTE(!"getFunctionEntryPoint");
+        // READYTORUN: FUTURE: JIT still calls this for tail. and jmp instructions
+        m_zapper->Warning(W("ReadyToRun: Method entrypoint cannot be encoded\n"));
         ThrowHR(E_NOTIMPL);
     }
 
@@ -2745,6 +2763,23 @@ void * ZapInfo::getAddressOfPInvokeFixup(CORINFO_METHOD_HANDLE method,void **ppI
 
     *ppIndirection = pImport;
     return NULL;
+}
+
+void ZapInfo::getAddressOfPInvokeTarget(CORINFO_METHOD_HANDLE method, CORINFO_CONST_LOOKUP *pLookup)
+{
+    _ASSERTE(pLookup != NULL);
+
+    void * pIndirection;
+    void * pResult = getAddressOfPInvokeFixup(method, &pIndirection);
+    if (pResult != NULL)
+    {
+        pLookup->accessType = IAT_PVALUE;
+        pLookup->addr = pResult;
+        return;
+    }
+
+    pLookup->accessType = IAT_PPVALUE;
+    pLookup->addr = pIndirection;
 }
 
 CORINFO_JUST_MY_CODE_HANDLE ZapInfo::getJustMyCodeHandle(
@@ -2943,7 +2978,7 @@ void ZapInfo::getCallInfo(CORINFO_RESOLVED_TOKEN * pResolvedToken,
 
             ZapImport * pImport;
 
-            if (flags & CORINFO_CALLINFO_LDFTN)
+            if (flags & (CORINFO_CALLINFO_LDFTN | CORINFO_CALLINFO_ATYPICAL_CALLSITE))
             {
                 pImport = m_pImage->GetImportTable()->GetMethodImport(ENCODE_METHOD_ENTRY, pResult->hMethod, pResolvedToken, pConstrainedResolvedToken);
 
@@ -2969,7 +3004,10 @@ void ZapInfo::getCallInfo(CORINFO_RESOLVED_TOKEN * pResolvedToken,
 #ifdef FEATURE_READYTORUN_COMPILER
         if (IsReadyToRunCompilation())
         {
-            ZapImport * pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_VIRTUAL_ENTRY, pResult->hMethod, pResolvedToken);
+            DWORD fAtypicalCallsite = (flags & CORINFO_CALLINFO_ATYPICAL_CALLSITE) ? CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE : 0;
+
+            ZapImport * pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+                (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_VIRTUAL_ENTRY | fAtypicalCallsite), pResult->hMethod, pResolvedToken);
 
             pResult->codePointerLookup.constLookup.accessType   = IAT_PVALUE;
             pResult->codePointerLookup.constLookup.addr         = pImport;
@@ -3311,7 +3349,7 @@ void ZapInfo::recordRelocation(void *location, void *target,
         break;
 
     case IMAGE_REL_BASED_PTR:
-#ifdef _TARGET_AMD64_
+#if defined(_TARGET_AMD64_) && !defined(FEATURE_CORECLR)
         _ASSERTE(!"Why we are not using RIP relative address?");
 #endif
         *(UNALIGNED TADDR *)location = (TADDR)targetOffset;
@@ -3606,6 +3644,8 @@ void ZapInfo::getFieldInfo (CORINFO_RESOLVED_TOKEN * pResolvedToken,
             ThrowHR(E_NOTIMPL);
         }
 
+        DWORD fAtypicalCallsite = (flags & CORINFO_ACCESS_ATYPICAL_CALLSITE) ? CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE : 0;
+
         switch (pResult->fieldAccessor)
         {
         case CORINFO_FIELD_INSTANCE:
@@ -3663,7 +3703,7 @@ void ZapInfo::getFieldInfo (CORINFO_RESOLVED_TOKEN * pResolvedToken,
                     }
                     break;
 
-                case (CORCOMPILE_FIXUP_BLOB_KIND)0:
+                case ENCODE_NONE:
                     break;
 
                 default:
@@ -3710,7 +3750,8 @@ void ZapInfo::getFieldInfo (CORINFO_RESOLVED_TOKEN * pResolvedToken,
                         UNREACHABLE_MSG("Unexpected static helper");
                     }
 
-                    ZapImport * pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(kind, pResolvedToken->hClass);
+                    ZapImport * pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+                        (CORCOMPILE_FIXUP_BLOB_KIND)(kind | fAtypicalCallsite), pResolvedToken->hClass);
 
                     pResult->fieldLookup.accessType = IAT_PVALUE;
                     pResult->fieldLookup.addr = pImport;
@@ -3719,7 +3760,8 @@ void ZapInfo::getFieldInfo (CORINFO_RESOLVED_TOKEN * pResolvedToken,
                 }
                 else
                 {
-                    ZapImport * pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_FIELD_ADDRESS, pResolvedToken->hField, pResolvedToken);
+                    ZapImport * pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+                        (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_FIELD_ADDRESS | fAtypicalCallsite), pResolvedToken->hField, pResolvedToken);
 
                     pResult->fieldLookup.accessType = IAT_PVALUE;
                     pResult->fieldLookup.addr = pImport;
@@ -4052,7 +4094,17 @@ CorInfoIsAccessAllowedResult ZapInfo::canAccessClass( CORINFO_RESOLVED_TOKEN * p
                                                       CORINFO_METHOD_HANDLE   callerHandle,
                                                       CORINFO_HELPER_DESC    *throwHelper)
 {
-    return m_pEEJitInfo->canAccessClass(pResolvedToken, callerHandle, throwHelper);
+    CorInfoIsAccessAllowedResult ret = m_pEEJitInfo->canAccessClass(pResolvedToken, callerHandle, throwHelper);
+
+#ifdef FEATURE_READYTORUN_COMPILER
+    if (ret != CORINFO_ACCESS_ALLOWED)
+    {
+        m_zapper->Warning(W("ReadyToRun: Runtime access checks not supported\n"));
+        ThrowHR(E_NOTIMPL);
+    }
+#endif
+
+    return ret;
 }
 
 
@@ -4181,6 +4233,14 @@ unsigned ZapInfo::getClassGClayout(CORINFO_CLASS_HANDLE cls, BYTE *gcPtrs)
     return m_pEEJitInfo->getClassGClayout(cls, gcPtrs);
 }
 
+// returns the enregister info for a struct based on type of fields, alignment, etc..
+bool ZapInfo::getSystemVAmd64PassStructInRegisterDescriptor(
+    /*IN*/  CORINFO_CLASS_HANDLE _structHnd,
+    /*OUT*/ SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR* structPassInRegDescPtr)
+{
+    return m_pEEJitInfo->getSystemVAmd64PassStructInRegisterDescriptor(_structHnd, structPassInRegDescPtr);
+}
+
 unsigned ZapInfo::getClassNumInstanceFields(CORINFO_CLASS_HANDLE cls)
 {
     return m_pEEJitInfo->getClassNumInstanceFields(cls);
@@ -4239,28 +4299,36 @@ void ZapInfo::getReadyToRunHelper(
 
     ZapImport * pImport = NULL;
 
+    DWORD fAtypicalCallsite = (id & CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE);
+    id = (CorInfoHelpFunc)(id & ~CORINFO_HELP_READYTORUN_ATYPICAL_CALLSITE);
+
     switch (id)
     {
     case CORINFO_HELP_READYTORUN_NEW:
-        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_NEW_HELPER, pResolvedToken->hClass);
+        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+            (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_NEW_HELPER | fAtypicalCallsite), pResolvedToken->hClass);
         break;
 
     case CORINFO_HELP_READYTORUN_NEWARR_1:
-        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_NEW_ARRAY_HELPER, pResolvedToken->hClass);
+        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+            (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_NEW_ARRAY_HELPER | fAtypicalCallsite), pResolvedToken->hClass);
         break;
 
     case CORINFO_HELP_READYTORUN_ISINSTANCEOF:
-        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_ISINSTANCEOF_HELPER, pResolvedToken->hClass);
+        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+            (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_ISINSTANCEOF_HELPER | fAtypicalCallsite), pResolvedToken->hClass);
         break;
 
     case CORINFO_HELP_READYTORUN_CHKCAST:
-        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_CHKCAST_HELPER, pResolvedToken->hClass);
+        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+            (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_CHKCAST_HELPER | fAtypicalCallsite), pResolvedToken->hClass);
         break;
 
     case CORINFO_HELP_READYTORUN_STATIC_BASE:
         if (m_pImage->GetCompileInfo()->IsInCurrentVersionBubble(m_pEEJitInfo->getClassModule(pResolvedToken->hClass)))
         {
-            pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_CCTOR_TRIGGER, pResolvedToken->hClass);
+            pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+                (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_CCTOR_TRIGGER | fAtypicalCallsite), pResolvedToken->hClass);
         }
         else
         {
@@ -4271,7 +4339,8 @@ void ZapInfo::getReadyToRunHelper(
         break;
 
     case CORINFO_HELP_READYTORUN_DELEGATE_CTOR:
-        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(ENCODE_DELEGATE_CTOR, pResolvedToken->hMethod, pResolvedToken);
+        pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
+            (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_DELEGATE_CTOR | fAtypicalCallsite), pResolvedToken->hMethod, pResolvedToken);
         break;
 
     default:
@@ -4451,6 +4520,12 @@ bool ZapInfo::canTailCall(CORINFO_METHOD_HANDLE caller,
                                          CORINFO_METHOD_HANDLE exactCallee,
                                          bool fIsTailPrefix)
 {
+#ifdef FEATURE_READYTORUN_COMPILER
+    // READYTORUN: FUTURE: Delay load fixups for tailcalls
+    if (IsReadyToRunCompilation())
+        return false;
+#endif
+
     return m_pEEJitInfo->canTailCall(caller, declaredCallee, exactCallee, fIsTailPrefix);
 }
 

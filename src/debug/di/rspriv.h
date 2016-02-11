@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // rspriv.
 // 
@@ -138,7 +137,9 @@ class DbgTransportSession;
 class ShimProcess;
 
 
+#ifndef FEATURE_PAL
 extern HINSTANCE GetModuleInst();
+#endif
 
 
 template <class T>
@@ -1264,14 +1265,14 @@ public:
         LOG((LF_CORDB, LL_EVERYTHING, "Memory: CordbBase object deleted: this=%p, id=%p, Refcount=0x%x\n", this, m_id, m_RefCount));
 
 #ifdef _DEBUG
-        InterlockedDecrement(&s_TotalObjectCount);
-        _ASSERTE(s_TotalObjectCount >= 0);
+        LONG newTotalObjectsCount = InterlockedDecrement(&s_TotalObjectCount);
+        _ASSERTE(newTotalObjectsCount >= 0);
 #endif
 
         // Don't shutdown logic until everybody is done with it.
         // If we leak objects, this may mean that we never shutdown logging at all!
 #if defined(_DEBUG) && defined(LOGGING)
-        if (s_TotalObjectCount == 0)
+        if (newTotalObjectsCount == 0)
         {
             ShutdownLogging();
         }
@@ -7791,6 +7792,8 @@ public:
     // constructor to initialize an instance of EnregisteredValueHome
     EnregisteredValueHome(const CordbNativeFrame * pFrame);
 
+    virtual ~EnregisteredValueHome() {}
+
     // virtual "copy constructor" to make a copy of "this" to be owned by a different instance of
     // Cordb*Value. If an instance of CordbVCObjectValue represents an enregistered value class, it means
     // there is a single field. This implies that the register for the CordbVCObject instance is the same as
@@ -7803,7 +7806,6 @@ public:
     // note:
     //    C++ allows derived implementations to differ on return type, thus allowing
     //    derived impls to return the cloned copy as its actual derived type, and not just as a base type.
-
 
 
     virtual
@@ -8221,6 +8223,9 @@ class ValueHome
 public:
     ValueHome(CordbProcess * pProcess):
       m_pProcess(pProcess) { _ASSERTE(pProcess != NULL); };
+
+    virtual
+    ~ValueHome() {}
  
     // releases resources as necessary
     virtual
@@ -10147,6 +10152,8 @@ class RCETWorkItem
 {
 public:
 
+    virtual ~RCETWorkItem() {}
+    
     // Item is executed and then removed from the list and deleted.
     virtual void Do() = 0;
 

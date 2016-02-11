@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================================
 **
@@ -169,7 +168,7 @@ void DoCharTest(char *inputstr, char *formatstr, char* checkchars, int numchars)
 
     if (buf[numchars] != (char)-1)
     {
-        Fail("ERROR: overflow occured in scanning character(s) from \"%s\" "
+        Fail("ERROR: overflow occurred in scanning character(s) from \"%s\" "
             "using \"%s\".\nExpected %d character(s)\n", inputstr, formatstr, 
             numchars);
     }
@@ -202,7 +201,7 @@ void DoWCharTest(char *inputstr, char *formatstr, WCHAR* checkchars, int numchar
 
     if (buf[numchars] != (WCHAR)-1)
     {
-        Fail("ERROR: overflow occured in scanning wide character(s) from \"%s\" "
+        Fail("ERROR: overflow occurred in scanning wide character(s) from \"%s\" "
             "using \"%s\".\nExpected %d character(s)\n", inputstr, formatstr, 
             numchars);
     }
@@ -237,7 +236,7 @@ void DoFloatTest(char *inputstr, char *formatstr, float checkval)
 
     if (buf[4] != (char)-1)
     {
-        Fail("ERROR: overflow occured in scanning float from \"%s\" "
+        Fail("ERROR: overflow occurred in scanning float from \"%s\" "
             "using \"%s\".\n", inputstr, formatstr);
 
     }

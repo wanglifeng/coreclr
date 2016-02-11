@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include "common.h"
 #include "assemblybinder.hpp"
@@ -34,6 +33,7 @@ HRESULT CLRPrivBinderAssemblyLoadContext::BindAssemblyByNameWorker(BINDER_SPACE:
                                       NULL,
                                       FALSE, //fNgenExplicitBind,
                                       FALSE, //fExplicitBindToNativeImage,
+                                      false, //excludeAppPaths,
                                       ppCoreCLRFoundAssembly);
     if (!FAILED(hr))
     {
@@ -53,10 +53,6 @@ HRESULT CLRPrivBinderAssemblyLoadContext::BindAssemblyByName(IAssemblyName     *
     // DevDiv #933506: Exceptions thrown during AssemblyLoadContext.Load should propagate
     // EX_TRY
     {
-        // Check if the assembly is in the TPA list or not.
-        //
-        // HAR_TODO: For Bing scenarios, we should be able to tell the TPA Binder
-        // to not consult the AppPaths/App_ni_Paths.
         _ASSERTE(m_pTPABinder != NULL);
         
         ReleaseHolder<BINDER_SPACE::Assembly> pCoreCLRFoundAssembly;
@@ -65,7 +61,9 @@ HRESULT CLRPrivBinderAssemblyLoadContext::BindAssemblyByName(IAssemblyName     *
         SAFE_NEW(pAssemblyName, AssemblyName);
         IF_FAIL_GO(pAssemblyName->Init(pIAssemblyName));
         
-        hr = m_pTPABinder->BindAssemblyByNameWorker(pAssemblyName, &pCoreCLRFoundAssembly);
+        // Check if the assembly is in the TPA list or not. Don't search app paths when using the TPA binder because the actual
+        // binder is using a host assembly resolver.
+        hr = m_pTPABinder->BindAssemblyByNameWorker(pAssemblyName, &pCoreCLRFoundAssembly, true /* excludeAppPaths */);
         if (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
         {
             // If we could not find the assembly in the TPA list,
@@ -84,7 +82,7 @@ HRESULT CLRPrivBinderAssemblyLoadContext::BindAssemblyByName(IAssemblyName     *
                 // Thus, if default binder has been overridden, then invoke it in an attempt to perform the binding for it make the call
                 // of what to do next. The host-overridden binder can either fail the bind or return reference to an existing assembly
                 // that has been loaded.
-                hr = AssemblyBinder::BindUsingHostAssemblyResolver(this, pAssemblyName, pIAssemblyName, &pCoreCLRFoundAssembly);
+                hr = AssemblyBinder::BindUsingHostAssemblyResolver(GetManagedAssemblyLoadContext(), pAssemblyName, pIAssemblyName, &pCoreCLRFoundAssembly);
                 if (SUCCEEDED(hr))
                 {
                     // We maybe returned an assembly that was bound to a different AssemblyLoadContext instance.
@@ -160,7 +158,8 @@ HRESULT CLRPrivBinderAssemblyLoadContext::BindUsingPEImage( /* in */ PEImage *pP
             {
                 // The simple name of the assembly being requested to be bound was found in the TPA list.
                 // Now, perform the actual bind to see if the assembly was really in the TPA assembly or not.
-                hr = m_pTPABinder->BindAssemblyByNameWorker(pAssemblyName, &pCoreCLRFoundAssembly);
+                // Don't search app paths when using the TPA binder because the actual binder is using a host assembly resolver.
+                hr = m_pTPABinder->BindAssemblyByNameWorker(pAssemblyName, &pCoreCLRFoundAssembly, true /* excludeAppPaths */);
                 if (SUCCEEDED(hr))
                 {
                     if (pCoreCLRFoundAssembly->GetIsInGAC())

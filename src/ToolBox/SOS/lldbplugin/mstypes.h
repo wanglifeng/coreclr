@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // Contains some definitions duplicated from pal.h, etc. because pal.h
 // has various conflicits with the linux standard runtime h files.
@@ -50,6 +49,9 @@ typedef int HRESULT;
 #define S_FALSE                          (HRESULT)0x00000001
 #define E_NOTIMPL                        (HRESULT)0x80004001
 #define E_FAIL                           (HRESULT)0x80004005
+#define E_INVALIDARG                     (HRESULT)0x80070057
+
+#define MAX_PATH                         260 
 
 #if defined(_MSC_VER) || defined(__llvm__)
 #define DECLSPEC_ALIGN(x)   __declspec(align(x))

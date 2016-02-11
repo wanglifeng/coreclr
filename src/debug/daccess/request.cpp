@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: request.cpp
 // 
@@ -1269,7 +1268,7 @@ ClrDataAccess::GetMethodDescName(CLRDATA_ADDRESS methodDesc, unsigned int count,
             Module* pModule = pMD->GetModule();
             if (pModule)
             {
-                WCHAR path[MAX_PATH];
+                WCHAR path[MAX_LONGPATH];
                 COUNT_T nChars = 0;
                 if (pModule->GetPath().DacGetUnicode(NumItems(path), path, &nChars) &&
                     nChars > 0 && nChars <= NumItems(path))
@@ -2985,7 +2984,7 @@ ClrDataAccess::GetGCHeapData(struct DacpGcHeapData *gcheapData)
         // Now we can get other important information about the heap
         gcheapData->g_max_generation = GCHeap::GetMaxGeneration();
         gcheapData->bServerMode = GCHeap::IsServerHeap();
-        gcheapData->bGcStructuresValid = CNameSpace::GetGcRuntimeStructuresValid();
+        gcheapData->bGcStructuresValid = GCScan::GetGcRuntimeStructuresValid();
         if (GCHeap::IsServerHeap())
         {
 #if !defined (FEATURE_SVR_GC)
@@ -3057,6 +3056,89 @@ ClrDataAccess::GetOOMData(CLRDATA_ADDRESS oomAddr, struct DacpOomData *data)
 
     SOSDacLeave();
     return hr;
+}
+
+HRESULT
+ClrDataAccess::GetGCGlobalMechanisms(size_t* globalMechanisms)
+{
+#ifdef GC_CONFIG_DRIVEN
+    if (globalMechanisms == NULL)
+        return E_INVALIDARG;
+
+    SOSDacEnter();
+    memset(globalMechanisms, 0, (sizeof(size_t) * MAX_GLOBAL_GC_MECHANISMS_COUNT));
+
+    for (int i = 0; i < MAX_GLOBAL_GC_MECHANISMS_COUNT; i++)
+    {
+        globalMechanisms[i] = gc_global_mechanisms[i];
+    }
+
+    SOSDacLeave();
+    return hr;
+#else
+    return E_NOTIMPL;
+#endif //GC_CONFIG_DRIVEN
+}
+
+HRESULT
+ClrDataAccess::GetGCInterestingInfoStaticData(struct DacpGCInterestingInfoData *data)
+{
+#ifdef GC_CONFIG_DRIVEN
+    if (data == NULL)
+        return E_INVALIDARG;
+
+    SOSDacEnter();
+    memset(data, 0, sizeof(DacpGCInterestingInfoData));
+
+    if (!GCHeap::IsServerHeap())
+    {
+        for (int i = 0; i < NUM_GC_DATA_POINTS; i++)
+            data->interestingDataPoints[i] = WKS::interesting_data_per_heap[i];
+        for (int i = 0; i < MAX_COMPACT_REASONS_COUNT; i++)
+            data->compactReasons[i] = WKS::compact_reasons_per_heap[i];
+        for (int i = 0; i < MAX_EXPAND_MECHANISMS_COUNT; i++)
+            data->expandMechanisms[i] = WKS::expand_mechanisms_per_heap[i];
+        for (int i = 0; i < MAX_GC_MECHANISM_BITS_COUNT; i++)
+            data->bitMechanisms[i] = WKS::interesting_mechanism_bits_per_heap[i];
+    }
+    else
+    {
+        hr = E_FAIL;
+    }
+
+    SOSDacLeave();
+    return hr;
+#else
+    return E_NOTIMPL;
+#endif //GC_CONFIG_DRIVEN
+}
+
+HRESULT
+ClrDataAccess::GetGCInterestingInfoData(CLRDATA_ADDRESS interestingInfoAddr, struct DacpGCInterestingInfoData *data)
+{
+#ifdef GC_CONFIG_DRIVEN
+    if (interestingInfoAddr == 0 || data == NULL)
+        return E_INVALIDARG;
+
+    SOSDacEnter();
+    memset(data, 0, sizeof(DacpGCInterestingInfoData));
+
+    if (!GCHeap::IsServerHeap())
+        hr = E_FAIL; // doesn't make sense to call this on WKS mode
+    
+#ifdef FEATURE_SVR_GC
+    else
+        hr = ServerGCInterestingInfoData(interestingInfoAddr, data);
+#else
+    _ASSERTE_MSG(false, "IsServerHeap returned true but FEATURE_SVR_GC not defined");
+    hr = E_NOTIMPL;
+#endif //FEATURE_SVR_GC
+
+    SOSDacLeave();
+    return hr;
+#else
+    return E_NOTIMPL;
+#endif //GC_CONFIG_DRIVEN
 }
 
 HRESULT
@@ -3823,8 +3905,8 @@ HRESULT ClrDataAccess::GetClrWatsonBucketsWorker(Thread * pThread, GenericModeBl
     OBJECTHANDLE ohThrowable = pThread->GetThrowableAsHandle();
     if (ohThrowable != NULL)
     {
-	    // Get the object from handle and check if the throwable is preallocated or not
-	    OBJECTREF oThrowable = ObjectFromHandle(ohThrowable);
+        // Get the object from handle and check if the throwable is preallocated or not
+        OBJECTREF oThrowable = ObjectFromHandle(ohThrowable);
         if (oThrowable != NULL)
         {
             // Does the throwable have buckets?
@@ -4269,4 +4351,27 @@ HRESULT ClrDataAccess::IsRCWDCOMProxy(CLRDATA_ADDRESS rcwAddr, BOOL* isDCOMProxy
 #else
     return E_NOTIMPL;
 #endif // FEATURE_COMINTEROP
+}
+
+HRESULT ClrDataAccess::GetClrNotification(CLRDATA_ADDRESS arguments[], int count, int *pNeeded)
+{
+    SOSDacEnter();
+
+    *pNeeded = MAX_CLR_NOTIFICATION_ARGS;
+
+    if (g_clrNotificationArguments[0] == NULL)
+    {
+        hr = E_FAIL;
+    }
+    else
+    {
+        for (int i = 0; i < count && i < MAX_CLR_NOTIFICATION_ARGS; i++)
+        {
+            arguments[i] = g_clrNotificationArguments[i];
+        }
+    }
+
+    SOSDacLeave();
+
+    return hr;;
 }

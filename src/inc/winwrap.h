@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // WinWrap.h
 //
@@ -721,7 +720,7 @@
 #endif // FEATURE_CORESYSTEM
 
 #ifndef _T
-#define _T(str) L ## str
+#define _T(str) W(str)
 #endif
 
 
@@ -838,7 +837,7 @@ InterlockedCompareExchangePointer (
 
 #endif // _X86_ && _MSC_VER
 
-#ifdef _ARM_
+#if defined(_ARM_) & !defined(FEATURE_PAL)
 //
 // InterlockedCompareExchangeAcquire/InterlockedCompareExchangeRelease is not mapped in SDK to the correct intrinsics. Remove once
 // the SDK definition is fixed (OS Bug #516255)
@@ -849,14 +848,18 @@ InterlockedCompareExchangePointer (
 #define InterlockedCompareExchangeRelease _InterlockedCompareExchange_rel
 #endif
 
-#if defined(_X86_)
+#if defined(_X86_) & !defined(InterlockedIncrement64)
 
 // Interlockedxxx64 that do not have intrinsics are only supported on Windows Server 2003 
 // or higher for X86 so define our own portable implementation
 
+#undef InterlockedIncrement64
 #define InterlockedIncrement64          __InterlockedIncrement64
+#undef InterlockedDecrement64
 #define InterlockedDecrement64          __InterlockedDecrement64
+#undef InterlockedExchange64
 #define InterlockedExchange64           __InterlockedExchange64
+#undef InterlockedExchangeAdd64
 #define InterlockedExchangeAdd64        __InterlockedExchangeAdd64
 
 __forceinline LONGLONG __InterlockedIncrement64(LONGLONG volatile *Addend)
@@ -943,7 +946,9 @@ inline void DbgWPrintf(const LPCWSTR wszFormat, ...)
     va_end(args);
 
     if (IsDebuggerPresent())
+    {
         OutputDebugStringW(wszBuffer);
+    }
     else
     {
         fwprintf(stdout, W("%s"), wszBuffer);

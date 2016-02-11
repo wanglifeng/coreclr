@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -46,6 +45,21 @@ JitOptions jitOpts =
 
 /*****************************************************************************/
 
+void jitStartup()
+{
+#ifdef FEATURE_TRACELOGGING
+    JitTelemetry::NotifyDllProcessAttach();
+#endif
+    Compiler::compStartup();
+}
+
+void jitShutdown()
+{
+    Compiler::compShutdown();
+#ifdef FEATURE_TRACELOGGING
+    JitTelemetry::NotifyDllProcessDetach();
+#endif
+}
 
 /*****************************************************************************
  *  jitOnDllProcessAttach() called by DllMain() when jit.dll is loaded
@@ -53,7 +67,7 @@ JitOptions jitOpts =
 
 void jitOnDllProcessAttach()
 {
-    Compiler::compStartup();
+    jitStartup();
 }
 
 /*****************************************************************************
@@ -62,7 +76,7 @@ void jitOnDllProcessAttach()
 
 void jitOnDllProcessDetach()
 {
-    Compiler::compShutdown();
+    jitShutdown();
 }
 
 
@@ -94,6 +108,7 @@ HINSTANCE GetModuleInst()
     return (g_hInst);
 }
 
+extern "C"
 void __stdcall sxsJitStartup(CoreClrCallbacks const & cccallbacks)
 {
 #ifndef SELF_NO_HOST
@@ -125,7 +140,7 @@ ICorJitCompiler* __stdcall getJit()
     {
         ILJitter = new (CILJitSingleton) CILJit();
 #ifdef FEATURE_MERGE_JIT_AND_ENGINE
-        Compiler::compStartup();
+        jitStartup();
 #endif
     }
     return(ILJitter);
@@ -148,6 +163,22 @@ CorJitResult CILJit::compileMethod (
         return g_realJitCompiler->compileMethod(compHnd, methodInfo, flags, entryAddress, nativeSizeOfCode);
     }
 
+    CORJIT_FLAGS jitFlags = { 0 };
+
+    DWORD jitFlagsSize = 0;
+#if COR_JIT_EE_VERSION > 460
+    if (flags == CORJIT_FLG_CALL_GETJITFLAGS)
+    {
+        jitFlagsSize = compHnd->getJitFlags(&jitFlags, sizeof(jitFlags));
+    }
+#endif
+
+    assert(jitFlagsSize <= sizeof(jitFlags));
+    if (jitFlagsSize == 0)
+    {
+        jitFlags.corJitFlags = flags;
+    }
+
     int                     result;
     void *                  methodCodePtr = NULL;
     CORINFO_METHOD_HANDLE   methodHandle  = methodInfo->ftn;
@@ -164,7 +195,7 @@ CorJitResult CILJit::compileMethod (
                            methodInfo,
                            &methodCodePtr,
                            nativeSizeOfCode,
-                           flags,
+                           &jitFlags,
                            NULL);
 
     if (result == CORJIT_OK)
@@ -212,6 +243,10 @@ void CILJit::ProcessShutdownWork(ICorStaticInfo* statInfo)
         // Continue, by shutting down this JIT as well.
     }
 
+#ifdef FEATURE_MERGE_JIT_AND_ENGINE
+    jitShutdown();
+#endif
+
     Compiler::ProcessShutdownWork(statInfo);
 }
 
@@ -230,7 +265,6 @@ void CILJit::getVersionIdentifier(GUID* versionIdentifier)
     memcpy(versionIdentifier, &JITEEVersionIdentifier, sizeof(GUID));
 }
 
-#ifndef RYUJIT_CTPBUILD
 /*****************************************************************************
  * Determine the maximum length of SIMD vector supported by this JIT.
  */
@@ -259,14 +293,11 @@ unsigned CILJit::getMaxIntrinsicSIMDVectorLength(DWORD cpuCompileFlags)
     return 0;
 #endif // !_TARGET_AMD64_
 }
-#endif //!RYUJIT_CTPBUILD
 
-#ifndef RYUJIT_CTPBUILD
 void CILJit::setRealJit(ICorJitCompiler* realJitCompiler)
 {
     g_realJitCompiler = realJitCompiler;
 }
-#endif // !RYUJIT_CTPBUILD
 
 
 /*****************************************************************************
@@ -275,33 +306,53 @@ void CILJit::setRealJit(ICorJitCompiler* realJitCompiler)
 
 unsigned           Compiler::eeGetArgSize(CORINFO_ARG_LIST_HANDLE list, CORINFO_SIG_INFO* sig)
 {
-#if defined(_TARGET_AMD64_) || defined(_TARGET_ARM64_)
+#if defined(_TARGET_AMD64_) 
 
     // Everything fits into a single 'slot' size
     // to accommodate irregular sized structs, they are passed byref
-    // TODO-ARM64-Bug?: structs <= 16 bytes get passed in 2 consecutive registers.
+
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+    CORINFO_CLASS_HANDLE        argClass;
+    CorInfoType argTypeJit = strip(info.compCompHnd->getArgType(sig, list, &argClass));
+    var_types argType = JITtype2varType(argTypeJit);
+    if (varTypeIsStruct(argType))
+    {
+        unsigned structSize = info.compCompHnd->getClassSize(argClass);
+        return structSize;  // TODO: roundUp() needed here?
+    }
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
     return sizeof(size_t);
 
-#else // !_TARGET_AMD64_ && !_TARGET_ARM64_
+#else // !_TARGET_AMD64_ 
 
     CORINFO_CLASS_HANDLE        argClass;
     CorInfoType argTypeJit = strip(info.compCompHnd->getArgType(sig, list, &argClass));
     var_types argType = JITtype2varType(argTypeJit);
 
-    if (argType == TYP_STRUCT)
+    if (varTypeIsStruct(argType))
     {
         unsigned structSize = info.compCompHnd->getClassSize(argClass);
 
         // make certain the EE passes us back the right thing for refanys
         assert(argTypeJit != CORINFO_TYPE_REFANY || structSize == 2*sizeof(void*));
 
-        return (unsigned)roundUp(structSize, sizeof(size_t));
+#if FEATURE_MULTIREG_ARGS
+#ifdef _TARGET_ARM64_
+        if (structSize > MAX_PASS_MULTIREG_BYTES)
+        {
+            // This struct is passed by reference using a single 'slot'
+            return TARGET_POINTER_SIZE;
+        }
+#endif // _TARGET_ARM64_
+#endif // FEATURE_MULTIREG_ARGS
+
+        return (unsigned)roundUp(structSize, TARGET_POINTER_SIZE);
     }
     else
     {
-        unsigned  argSize = sizeof(size_t) * genTypeStSz(argType);
+        unsigned  argSize = sizeof(int) * genTypeStSz(argType);
         assert(0 < argSize && argSize <= sizeof(__int64));
-        return  argSize;
+        return (unsigned)roundUp(argSize, TARGET_POINTER_SIZE);
     }
 #endif
 }
@@ -321,13 +372,8 @@ GenTreePtr          Compiler::eeGetPInvokeCookie(CORINFO_SIG_INFO *szMetaSig)
 
 unsigned           Compiler::eeGetArrayDataOffset(var_types type)
 {
-#ifndef RYUJIT_CTPBUILD
     return varTypeIsGC(type) ? eeGetEEInfo()->offsetOfObjArrayData 
                                                  : offsetof(CORINFO_Array, u1Elems);
-#else
-    return varTypeIsGC(type) ? offsetof(CORINFO_RefArray, refElems)
-                                                 : offsetof(CORINFO_Array, u1Elems);
-#endif
 }
 
 /*****************************************************************************/
@@ -884,6 +930,20 @@ void                Compiler::eeSetEHinfo(unsigned                 EHnumber,
     }
 }
 
+WORD                Compiler::eeGetRelocTypeHint(void * target)
+{
+    if (info.compMatchedVM)
+    {
+        return info.compCompHnd->getRelocTypeHint(target);
+    }
+    else
+    {
+        // No hints
+        return (WORD)-1;
+    }
+}
+
+
 CORINFO_FIELD_HANDLE Compiler::eeFindJitDataOffs(unsigned dataOffs)
 {
     // Data offsets are marked by the fact that the low two bits are 0b01 0x1
@@ -918,6 +978,61 @@ int Compiler::eeGetJitDataOffs(CORINFO_FIELD_HANDLE  field)
         return -1;
     }
 }
+
+
+/*****************************************************************************
+ *
+ *                      ICorStaticInfo wrapper functions
+ */
+
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+
+#ifdef DEBUG
+void Compiler::dumpSystemVClassificationType(SystemVClassificationType ct)
+{
+    switch (ct)
+    {
+    case SystemVClassificationTypeUnknown:              printf("UNKNOWN");              break;
+    case SystemVClassificationTypeStruct:               printf("Struct");               break;
+    case SystemVClassificationTypeNoClass:              printf("NoClass");              break;
+    case SystemVClassificationTypeMemory:               printf("Memory");               break;
+    case SystemVClassificationTypeInteger:              printf("Integer");              break;
+    case SystemVClassificationTypeIntegerReference:     printf("IntegerReference");     break;
+    case SystemVClassificationTypeIntegerByRef:         printf("IntegerByReference");   break;
+    case SystemVClassificationTypeSSE:                  printf("SSE");                  break;
+    default:                                            printf("ILLEGAL");              break;
+    }
+}
+#endif // DEBUG
+
+void Compiler::eeGetSystemVAmd64PassStructInRegisterDescriptor(/*IN*/  CORINFO_CLASS_HANDLE structHnd,
+                                                               /*OUT*/ SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR* structPassInRegDescPtr)
+{
+    bool ok = info.compCompHnd->getSystemVAmd64PassStructInRegisterDescriptor(structHnd, structPassInRegDescPtr);
+    noway_assert(ok);
+
+#ifdef DEBUG
+    if (verbose)
+    {
+        printf("**** getSystemVAmd64PassStructInRegisterDescriptor(0x%x (%s), ...) =>\n", dspPtr(structHnd), eeGetClassName(structHnd));
+        printf("        passedInRegisters = %s\n", dspBool(structPassInRegDescPtr->passedInRegisters));
+        if (structPassInRegDescPtr->passedInRegisters)
+        {
+            printf("        eightByteCount   = %d\n", structPassInRegDescPtr->eightByteCount);
+            for (unsigned int i = 0; i < structPassInRegDescPtr->eightByteCount; i++)
+            {
+                printf("        eightByte #%d -- classification: ", i);
+                dumpSystemVClassificationType(structPassInRegDescPtr->eightByteClassifications[i]);
+                printf(", byteSize: %d, byteOffset: %d\n",
+                    structPassInRegDescPtr->eightByteSizes[i],
+                    structPassInRegDescPtr->eightByteOffsets[i]);
+            }
+        }
+    }
+#endif // DEBUG
+}
+
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
 
 /*****************************************************************************
  *

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // ReJit.cpp
 //
@@ -607,7 +606,7 @@ HRESULT ReJitManager::RequestReJIT(
     // later when the runtime is suspended.
     //
     //BUGBUG: Its not clear to me why it is safe to hold ReJitInfo* lists
-    // outside the table locks. If an AppDomain unload occured I don't see anything
+    // outside the table locks. If an AppDomain unload occurred I don't see anything
     // that prevents them from being deleted. If this is a bug it is a pre-existing
     // condition and nobody has reported it as an issue yet. AppDomainExit probably
     // needs to synchronize with something.
@@ -2991,7 +2990,7 @@ HRESULT ReJitManager::GetReJITIDs(PTR_MethodDesc pMD, ULONG cReJitIds, ULONG * p
 //      * methodDef - The MethodDef in the module/MethodDef identifier pair for the method which
 //                  had an error during rejit
 //      * pMD - If available, the specific method instance which had an error during rejit
-//      * hrStatus - HRESULT for the rejit error that occured
+//      * hrStatus - HRESULT for the rejit error that occurred
 //      * pErrors - the list of error records that this method will append to
 //
 // Return Value:
@@ -3028,7 +3027,7 @@ HRESULT ReJitManager::AddReJITError(Module* pModule, mdMethodDef methodDef, Meth
 //
 // Arguments:
 //      * pReJitInfo - The method which had an error during rejit
-//      * hrStatus - HRESULT for the rejit error that occured
+//      * hrStatus - HRESULT for the rejit error that occurred
 //      * pErrors - the list of error records that this method will append to
 //
 // Return Value:
@@ -3863,7 +3862,7 @@ ReJitPublishMethodHolder::~ReJitPublishMethodHolder()
     // This method can't have a contract because leaving the table lock
     // below decrements GCNoTrigger count. Contracts always revert these changes
     // at the end of the method but we need the decremented count to flow out of the
-    // method. The balancing increment occured in the constructor.
+    // method. The balancing increment occurred in the constructor.
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_TRIGGERS; // NOTRIGGER until we leave the lock
     STATIC_CONTRACT_CAN_TAKE_LOCK;
@@ -3932,7 +3931,7 @@ ReJitPublishMethodTableHolder::~ReJitPublishMethodTableHolder()
     // This method can't have a contract because leaving the table lock
     // below decrements GCNoTrigger count. Contracts always revert these changes
     // at the end of the method but we need the decremented count to flow out of the
-    // method. The balancing increment occured in the constructor.
+    // method. The balancing increment occurred in the constructor.
     STATIC_CONTRACT_NOTHROW; 
     STATIC_CONTRACT_GC_TRIGGERS; // NOTRIGGER until we leave the lock
     STATIC_CONTRACT_CAN_TAKE_LOCK;

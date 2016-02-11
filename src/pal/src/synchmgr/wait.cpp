@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -319,8 +318,8 @@ DWORD CorUnix::InternalWaitForMultipleObjectsEx(
         wtWaitType = fWAll ? MultipleObjectsWaitAll : MultipleObjectsWaitOne;
         if (nCount > MAXIMUM_STACK_WAITOBJ_ARRAY_SIZE)
         {
-            ppIPalObjs = InternalNewArray<IPalObject*>(pThread, nCount);
-            ppISyncWaitCtrlrs = InternalNewArray<ISynchWaitController*>(pThread, nCount);
+            ppIPalObjs = InternalNewArray<IPalObject*>(nCount);
+            ppISyncWaitCtrlrs = InternalNewArray<ISynchWaitController*>(nCount);
             if ((NULL == ppIPalObjs) || (NULL == ppISyncWaitCtrlrs))
             {
                 ERROR("Out of memory allocating internal structures\n");
@@ -345,6 +344,26 @@ DWORD CorUnix::InternalWaitForMultipleObjectsEx(
         else
             pThread->SetLastError(ERROR_INTERNAL_ERROR);
         goto WFMOExIntExit;
+    }
+
+    if (fWAll)
+    {
+        // For a wait-all operation, check for duplicate wait objects in the array. This just uses a brute-force O(n^2)
+        // algorithm, but since MAXIMUM_WAIT_OBJECTS is small, the worst case is not so bad, and the average case would involve
+        // significantly fewer items.
+        for (DWORD i = 0; i < nCount - 1; ++i)
+        {
+            IPalObject *const objectToCheck = ppIPalObjs[i];
+            for (DWORD j = i + 1; j < nCount; ++j)
+            {
+                if (ppIPalObjs[j] == objectToCheck)
+                {
+                    ERROR("Duplicate handle provided for a wait-all operation [error=%u]\n", ERROR_INVALID_PARAMETER);
+                    pThread->SetLastError(ERROR_INVALID_PARAMETER);
+                    goto WFMOExIntCleanup;
+                }
+            }
+        }
     }
 
     palErr = g_pSynchronizationManager->GetSynchWaitControllersForObjects(
@@ -563,11 +582,11 @@ WFMOExIntCleanup:
 WFMOExIntExit:
     if (nCount > MAXIMUM_STACK_WAITOBJ_ARRAY_SIZE)
     {
-        InternalDeleteArray(pThread, ppIPalObjs);
-        InternalDeleteArray(pThread, ppISyncWaitCtrlrs);
+        InternalDeleteArray(ppIPalObjs);
+        InternalDeleteArray(ppISyncWaitCtrlrs);
     }
     
-    return dwRet;    
+    return dwRet;
 }
 
 PAL_ERROR CorUnix::InternalSleepEx (

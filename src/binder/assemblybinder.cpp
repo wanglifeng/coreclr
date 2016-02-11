@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ============================================================
 //
 // AssemblyBinder.cpp
@@ -56,7 +55,7 @@ extern BOOL RuntimeIsLegacyNetCF(DWORD adid);
 #include "clrprivbindercoreclr.h"
 #include "clrprivbinderassemblyloadcontext.h"
 // Helper function in the VM, invoked by the Binder, to invoke the host assembly resolver
-extern HRESULT RuntimeInvokeHostAssemblyResolver(CLRPrivBinderAssemblyLoadContext *pLoadContextToBindWithin, IAssemblyName *pIAssemblyName, ICLRPrivAssembly **ppLoadedAssembly);
+extern HRESULT RuntimeInvokeHostAssemblyResolver(INT_PTR pManagedAssemblyLoadContextToBindWithin, IAssemblyName *pIAssemblyName, ICLRPrivAssembly **ppLoadedAssembly);
 
 // Helper to check if we have a host assembly resolver set
 extern BOOL RuntimeCanUseAppPathAssemblyResolver(DWORD adid);
@@ -86,8 +85,7 @@ namespace BINDER_SPACE
         //
         HRESULT IsValidAssemblyVersion(/* in */ AssemblyName *pRequestedName,
                                        /* in */ AssemblyName *pFoundName,
-                                       /* in */ ApplicationContext *pApplicationContext,
-                                       /* in */ BOOL fBeingBoundToPlatformAssembly)
+                                       /* in */ ApplicationContext *pApplicationContext)
         {
             HRESULT hr = S_OK;
             BINDER_LOG_ENTER(W("IsValidAssemblyVersion"));
@@ -100,18 +98,10 @@ namespace BINDER_SPACE
 #endif
 
             //
-            // If the AssemblyRef has no version and we're not binding to a platform assembly,
-            // we can skip version checking and allow the bind
+            // If the AssemblyRef has no version, we can treat it as requesting the most accommodating version (0.0.0.0). In
+            // that case, skip version checking and allow the bind.
             //
-            //
-            // Windows Phone 7 Quirk:
-            //
-            // NetCF allows partial binds to platform assemblies.  If we are running a
-            // Mango application, skip the version check if no Ref version is provided,
-            // since there are apps in the Marketplace that do Assembly.Load("System")
-            //
-            if (((fWindowsPhone7 && fBeingBoundToPlatformAssembly) || !fBeingBoundToPlatformAssembly) && !pRequestedName->HaveAssemblyVersion())
-                
+            if (!pRequestedName->HaveAssemblyVersion())
             {
                 return hr;
             }
@@ -131,9 +121,8 @@ namespace BINDER_SPACE
                 // and satisfy this one's requirements, we're in a situation where the assembly
                 // Ref has a version, but the Def doesn't, which cannot succeed a bind
                 //
-                if (!fBeingBoundToPlatformAssembly
-                    && pRequestedName->HaveAssemblyVersion()
-                    && !pFoundName->HaveAssemblyVersion())
+                _ASSERTE(pRequestedName->HaveAssemblyVersion());
+                if (!pFoundName->HaveAssemblyVersion())
                 {
                     hr = FUSION_E_APP_DOMAIN_LOCKED;
                 }
@@ -174,9 +163,9 @@ namespace BINDER_SPACE
             }
             else
             {
-                PathString fullAssemblyPath;
-                WCHAR *pwzFullAssemblyPath = fullAssemblyPath.OpenUnicodeBuffer(MAX_PATH);
-                DWORD dwCCFullAssemblyPath = MAX_PATH + 1; // SString allocates extra byte for null.
+                SString fullAssemblyPath;
+                WCHAR *pwzFullAssemblyPath = fullAssemblyPath.OpenUnicodeBuffer(MAX_LONGPATH);
+                DWORD dwCCFullAssemblyPath = MAX_LONGPATH + 1; // SString allocates extra byte for null.
 
                 MutateUrlToPath(assemblyPath);
 
@@ -186,7 +175,7 @@ namespace BINDER_SPACE
                                                           NULL);
                 fullAssemblyPath.CloseBuffer(dwCCFullAssemblyPath);
 
-                if ((dwCCFullAssemblyPath == 0) || (dwCCFullAssemblyPath > (MAX_PATH + 1)))
+                if ((dwCCFullAssemblyPath == 0) || (dwCCFullAssemblyPath > (MAX_LONGPATH + 1)))
                 {
                     hr = HRESULT_FROM_GetLastError();
                 }
@@ -194,9 +183,6 @@ namespace BINDER_SPACE
                 {
                     assemblyPath.Set(fullAssemblyPath);
                 }
-
-                // Now turn this path into our canonical representation
-                CanonicalizePath(assemblyPath);
             }
 
             return hr;
@@ -576,6 +562,7 @@ namespace BINDER_SPACE
                                          /* in */  PEAssembly          *pParentAssembly,
                                          /* in */  BOOL                 fNgenExplicitBind,
                                          /* in */  BOOL                 fExplicitBindToNativeImage,
+                                         /* in */  bool                 excludeAppPaths,
                                          /* out */ Assembly           **ppAssembly)
     {
         HRESULT hr = S_OK;
@@ -604,6 +591,7 @@ namespace BINDER_SPACE
                 hr = BindByName(pApplicationContext,
                                       pAssemblyName,
                                       BIND_CACHE_FAILURES,
+                                      excludeAppPaths,
                                       &bindResult);
                 IF_FAIL_GO(hr);
             }
@@ -632,6 +620,7 @@ namespace BINDER_SPACE
                                         assemblyPath,
                                         fDoNgenExplicitBind,
                                         fExplicitBindToNativeImage,
+                                        excludeAppPaths,
                                         &bindResult));
             }
 
@@ -863,6 +852,7 @@ namespace BINDER_SPACE
                  ((hr = BindByName(pApplicationContext,
                                    pAssemblyName,
                                    BIND_CACHE_FAILURES | BIND_CACHE_RERUN_BIND,
+                                   false, // excludeAppPaths
                                    &bindResult)) == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))
                 )
             {
@@ -924,6 +914,7 @@ namespace BINDER_SPACE
     HRESULT AssemblyBinder::BindByName(ApplicationContext *pApplicationContext,
                                        AssemblyName       *pAssemblyName,
                                        DWORD               dwBindFlags,
+                                       bool                excludeAppPaths,
                                        BindResult         *pBindResult)
     {
         HRESULT hr = S_OK;
@@ -966,6 +957,7 @@ namespace BINDER_SPACE
        IF_FAIL_GO(BindLocked(pApplicationContext,
                               pRetargetedAssemblyName,
                               dwBindFlags,
+                              excludeAppPaths,
                               pBindResult));
 
         if (!pBindResult->HaveResult())
@@ -1006,6 +998,7 @@ namespace BINDER_SPACE
                                          PathString         &assemblyPath,
                                          BOOL                fNgenExplicitBind,
                                          BOOL                fExplicitBindToNativeImage,
+                                         bool                excludeAppPaths,
                                          BindResult         *pBindResult)
     {
         HRESULT hr = S_OK;
@@ -1049,6 +1042,7 @@ namespace BINDER_SPACE
         {
             IF_FAIL_GO(BindLockedOrService(pApplicationContext,
                                            pRetargetedAssemblyName,
+                                           excludeAppPaths,
                                            &lockedBindResult));
             if (lockedBindResult.HaveResult())
             {
@@ -1094,6 +1088,7 @@ namespace BINDER_SPACE
     HRESULT AssemblyBinder::BindLocked(ApplicationContext *pApplicationContext,
                                        AssemblyName       *pAssemblyName,
                                        DWORD               dwBindFlags,
+                                       bool                excludeAppPaths,
                                        BindResult         *pBindResult)
     {
         HRESULT hr = S_OK;
@@ -1120,10 +1115,7 @@ namespace BINDER_SPACE
             else
             {
                 // Can't give higher serciving than already bound
-                IF_FAIL_GO(IsValidAssemblyVersion(pAssemblyName,
-                                                  pContextEntry->GetAssemblyName(),
-                                                  pApplicationContext,
-                                                  !!pContextEntry->GetIsInGAC()));
+                IF_FAIL_GO(IsValidAssemblyVersion(pAssemblyName, pContextEntry->GetAssemblyName(), pApplicationContext));
             }
             
             pBindResult->SetResult(pContextEntry);
@@ -1132,23 +1124,14 @@ namespace BINDER_SPACE
 #endif // !CROSSGEN_COMPILE
         if (pApplicationContext->IsTpaListProvided())
         {
-            bool fUnifiedAppAssemblyToPlatform = false;
             IF_FAIL_GO(BindByTpaList(pApplicationContext,
                                      pAssemblyName,
                                      FALSE /*fInspectionOnly*/,
-                                     pBindResult,
-                                     &fUnifiedAppAssemblyToPlatform));
+                                     excludeAppPaths,
+                                     pBindResult));
             if (pBindResult->HaveResult())
             {
-                bool fBeingBoundToPlatformAssembly = !!pBindResult->GetIsInGAC();
-                if (fUnifiedAppAssemblyToPlatform)
-                {
-                    // Pretend as if we have bound to an app assembly since the RequestedAssemblyName came in for an app
-                    // assembly and thus, may not contain a version number.
-                    fBeingBoundToPlatformAssembly = false;
-                }
-                
-                hr = IsValidAssemblyVersion(pAssemblyName, pBindResult->GetAssemblyName(), pApplicationContext, fBeingBoundToPlatformAssembly);
+                hr = IsValidAssemblyVersion(pAssemblyName, pBindResult->GetAssemblyName(), pApplicationContext);
                 if (FAILED(hr))
                 {
                     pBindResult->SetNoResult();                    
@@ -1163,6 +1146,7 @@ namespace BINDER_SPACE
     /* static */
     HRESULT AssemblyBinder::BindLockedOrService(ApplicationContext *pApplicationContext,
                                                 AssemblyName       *pAssemblyName,
+                                                bool                excludeAppPaths,
                                                 BindResult         *pBindResult)
     {
         HRESULT hr = S_OK;
@@ -1173,6 +1157,7 @@ namespace BINDER_SPACE
         IF_FAIL_GO(BindLocked(pApplicationContext,
                               pAssemblyName,
                               0 /*  Do not IgnoreDynamicBinds */,
+                              excludeAppPaths,
                               &lockedBindResult));
 
         if (lockedBindResult.HaveResult())
@@ -1251,17 +1236,9 @@ namespace BINDER_SPACE
 #ifdef FEATURE_LEGACYNETCF
         fWindowsPhone7 = RuntimeIsLegacyNetCF(pApplicationContext->GetAppDomainId()) == TRUE;
 #endif
-        //
-        // Windows Phone 7 Quirk:
-        //
-        // NetCF allows partial binds to platform assemblies.  If we are running a
-        // Mango application, skip the PKT check if no Ref version is provided,
-        // since there are apps in the Marketplace that do Assembly.Load("System")
-        //
+
         if (!tpaListAssembly || (fWindowsPhone7 && tpaListAssembly))
         {
-            dwIncludeFlags |= AssemblyName::EXCLUDE_PUBLIC_KEY_TOKEN_IF_MISSING;
-
             //
             // On Windows Phone 7, exclude culture comparisons when requesting an uncultured
             // assembly for app compat reasons (there are main app assemblies with spurious cultures)
@@ -1337,7 +1314,7 @@ namespace BINDER_SPACE
             IF_FAIL_GO(FUSION_E_REF_DEF_MISMATCH);
         }
 
-        // Up-stack expects S_OK when we don't find any candidate assemblies and no fatal error occured (ie, no S_FALSE)
+        // Up-stack expects S_OK when we don't find any candidate assemblies and no fatal error occurred (ie, no S_FALSE)
         hr = S_OK;
     Exit:
         return hr;
@@ -1361,17 +1338,14 @@ namespace BINDER_SPACE
     HRESULT AssemblyBinder::BindByTpaList(ApplicationContext  *pApplicationContext,
                                           AssemblyName        *pRequestedAssemblyName,
                                           BOOL                 fInspectionOnly,
-                                          BindResult          *pBindResult,
-                                          bool                *pfUnifiedAppAssemblyToPlatform)
+                                          bool                 excludeAppPaths,
+                                          BindResult          *pBindResult)
     {
         HRESULT hr = S_OK;
         BINDER_LOG_ENTER(W("AssemblyBinder::BindByTpaList"));
 
         SString &culture = pRequestedAssemblyName->GetCulture();
         bool fPartialMatchOnTpa = false;
-        
-        // Did we unify an app assembly (with same SimpleName+Culture+PKT) to a platform (TPA) assembly?
-        *pfUnifiedAppAssemblyToPlatform = false;
         
         if (!culture.IsEmpty() && !culture.EqualsCaseInsensitive(g_BinderVariables->cultureNeutral))
         {
@@ -1459,11 +1433,11 @@ namespace BINDER_SPACE
                 // We either didn't find a candidate, or the ref-def failed.  Either way; fall back to app path probing.
             }
 
-            bool fUseAppPathsBasedResolver = true;
+            bool fUseAppPathsBasedResolver = !excludeAppPaths;
             
 #if defined(FEATURE_HOST_ASSEMBLY_RESOLVER) && !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE) && !defined(MDILNIGEN)           
             // If Host Assembly Resolver is specified, then we will use that as the override for the default resolution mechanism (that uses AppPath probing).
-            if (!RuntimeCanUseAppPathAssemblyResolver(pApplicationContext->GetAppDomainId()))
+            if (fUseAppPathsBasedResolver && !RuntimeCanUseAppPathAssemblyResolver(pApplicationContext->GetAppDomainId()))
             {
                 fUseAppPathsBasedResolver = false;
             }
@@ -1567,7 +1541,6 @@ namespace BINDER_SPACE
                             if (TestCandidateRefMatchesDef(pApplicationContext, pAssembly->GetAssemblyName(), pTPAAssembly->GetAssemblyName(), true /*tpaListAssembly*/))
                             {
                                 // Fullname (SimpleName+Culture+PKT) matched for TPA and app assembly - so bind to TPA instance.
-                                *pfUnifiedAppAssemblyToPlatform = true;
                                 pBindResult->SetResult(pTPAAssembly);
                                 GO_WITH_HRESULT(S_OK);
                             }
@@ -1882,7 +1855,7 @@ namespace BINDER_SPACE
 #endif //CROSSGEN_COMPILE
 
 #if defined(FEATURE_HOST_ASSEMBLY_RESOLVER) && !defined(DACCESS_COMPILE) && !defined(CROSSGEN_COMPILE) && !defined(MDILNIGEN)
-HRESULT AssemblyBinder::BindUsingHostAssemblyResolver (/* in */ CLRPrivBinderAssemblyLoadContext *pLoadContextToBindWithin,
+HRESULT AssemblyBinder::BindUsingHostAssemblyResolver (/* in */ INT_PTR pManagedAssemblyLoadContextToBindWithin,
                                                        /* in */ AssemblyName       *pAssemblyName,
                                                       /* in */ IAssemblyName      *pIAssemblyName,
                                                       /* out */ Assembly           **ppAssembly)
@@ -1890,15 +1863,11 @@ HRESULT AssemblyBinder::BindUsingHostAssemblyResolver (/* in */ CLRPrivBinderAss
     HRESULT hr = E_FAIL;
     BINDER_LOG_ENTER(W("AssemblyBinder::BindUsingHostAssemblyResolver"));
     
-    _ASSERTE(pLoadContextToBindWithin != NULL);
-    
-    // Get the application context within which the assembly will be bound and loaded
-    ApplicationContext *pApplicationContext = pLoadContextToBindWithin->GetAppContext();
-    _ASSERTE(pApplicationContext != NULL);
+    _ASSERTE(pManagedAssemblyLoadContextToBindWithin != NULL);
     
     // Call into the VM to use the HostAssemblyResolver and load the assembly
     ICLRPrivAssembly *pLoadedAssembly = NULL;
-    hr = RuntimeInvokeHostAssemblyResolver(pLoadContextToBindWithin, pIAssemblyName, &pLoadedAssembly);
+    hr = RuntimeInvokeHostAssemblyResolver(pManagedAssemblyLoadContextToBindWithin, pIAssemblyName, &pLoadedAssembly);
     if (SUCCEEDED(hr))
     {
         _ASSERTE(pLoadedAssembly != NULL);
@@ -1938,6 +1907,7 @@ Retry:
         hr = BindByName(pApplicationContext,
                                pAssemblyName,
                                BIND_CACHE_FAILURES|BIND_CACHE_RERUN_BIND|BIND_IGNORE_REFDEF_MATCH,
+                               false, // excludeAppPaths
                                &bindResult);
         
         if (hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))

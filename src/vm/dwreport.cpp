@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // FILE: dwreport.cpp
 //
@@ -215,7 +214,7 @@ BOOL RegisterOutOfProcessWatsonCallbacks()
     CONTRACTL_END;
     
     WCHAR wszDACName[] = MAIN_DAC_MODULE_NAME_W W(".dll");
-    WCHAR wszDACPath[MAX_PATH];
+    WCHAR wszDACPath[MAX_LONGPATH];
     DWORD dwSize = 0;
 
     if ((FAILED(::GetCORSystemDirectoryInternal(wszDACPath, NumItems(wszDACPath), &dwSize))) || 
@@ -1471,8 +1470,8 @@ BOOL RunWatson(
     startupInfo.cb = sizeof(STARTUPINFOW);
 
 
-    WCHAR watsonAppName[MAX_PATH];
-    WCHAR watsonCommandLine[MAX_PATH+1];
+    WCHAR watsonAppName[MAX_LONGPATH];
+    WCHAR watsonCommandLine[MAX_LONGPATH+1];
 
     {
 #if !defined(FEATURE_CORECLR)
@@ -1873,7 +1872,7 @@ HRESULT GetManagedBucketParametersForIp(
         // probably inside of mscorwks
         //
         // Note that while there may be an actual managed exception that
-        // occured, we can live without the managed bucket parameters. For
+        // occurred, we can live without the managed bucket parameters. For
         // exceptions coming from within mscorwks.dll, the native bucket
         // parameters will do just fine.
 

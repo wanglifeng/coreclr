@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*****************************************************************************/
 #ifndef _TARGET_H_
@@ -17,6 +16,26 @@
 #if !defined(_TARGET_AMD64_)
 #error When UNIX_AMD64_ABI is defined you must define _TARGET_AMD64_ defined as well.
 #endif
+#endif
+
+#if (defined(FEATURE_CORECLR) && defined(PLATFORM_UNIX))
+#define FEATURE_VARARG    0
+#else // !(defined(FEATURE_CORECLR) && defined(PLATFORM_UNIX))
+#define FEATURE_VARARG    1
+#endif // !(defined(FEATURE_CORECLR) && defined(PLATFORM_UNIX))
+
+/*****************************************************************************/
+// The following are human readable names for the target architectures
+#if defined(_TARGET_X86_)
+  #define TARGET_READABLE_NAME "X86"
+#elif defined(_TARGET_AMD64_)
+  #define TARGET_READABLE_NAME "AMD64"
+#elif defined(_TARGET_ARM_)
+  #define TARGET_READABLE_NAME "ARM"
+#elif defined(_TARGET_ARM64_)
+  #define TARGET_READABLE_NAME "ARM64"
+#else
+  #error Unsupported or unset target architecture
 #endif
 
 /*****************************************************************************/
@@ -356,6 +375,12 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define FEATURE_FASTTAILCALL     0       // Tail calls made as epilog+jmp
   #define FEATURE_TAILCALL_OPT     0       // opportunistic Tail calls (without ".tail" prefix) made as fast tail calls.
   #define FEATURE_SET_FLAGS        0       // Set to true to force the JIT to mark the trees with GTF_SET_FLAGS when the flags need to be set
+  #define FEATURE_MULTIREG_ARGS_OR_RET  0  // Support for passing and/or returning single values in more than one register
+  #define FEATURE_MULTIREG_ARGS         0  // Support for passing a single argument in more than one register  
+  #define FEATURE_MULTIREG_RET          0  // Support for returning a single value in more than one register  
+  #define MAX_ARG_REG_COUNT             2  // Maximum registers used to pass an argument.
+  #define MAX_RET_REG_COUNT             2  // Maximum registers used to return a value.
+
 #ifdef FEATURE_USE_ASM_GC_WRITE_BARRIERS
   #define NOGC_WRITE_BARRIERS      1       // We have specialized WriteBarrier JIT Helpers that DO-NOT trash the RBM_CALLEE_TRASH registers
 #else
@@ -403,8 +428,11 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
 
   #define RBM_ALLFLOAT            (RBM_XMM0 | RBM_XMM1 | RBM_XMM2 | RBM_XMM3 | RBM_XMM4 | RBM_XMM5 | RBM_XMM6 | RBM_XMM7)
   #define RBM_ALLDOUBLE            RBM_ALLFLOAT
-  #define RBM_FLT_CALLEE_SAVED    (RBM_XMM6|RBM_XMM7)
-  #define RBM_FLT_CALLEE_TRASH    (RBM_XMM0|RBM_XMM1|RBM_XMM2|RBM_XMM3|RBM_XMM4|RBM_XMM5)
+
+  // TODO-CQ: Currently we are following the x86 ABI for SSE2 registers.
+  // This should be reconsidered.
+  #define RBM_FLT_CALLEE_SAVED     RBM_NONE
+  #define RBM_FLT_CALLEE_TRASH     RBM_ALLFLOAT
   #define REG_VAR_ORDER_FLT        REG_XMM0, REG_XMM1, REG_XMM2, REG_XMM3, REG_XMM4, REG_XMM5, REG_XMM6, REG_XMM7
 
   #define REG_FLT_CALLEE_SAVED_FIRST   REG_XMM6
@@ -442,7 +470,6 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
 
   #define RBM_INT_CALLEE_SAVED    (RBM_EBX|RBM_ESI|RBM_EDI)
   #define RBM_INT_CALLEE_TRASH    (RBM_EAX|RBM_ECX|RBM_EDX)
-  #define RBM_CALLEE_TRASH_NOGC    0
 
   #define RBM_CALLEE_SAVED        (RBM_INT_CALLEE_SAVED | RBM_FLT_CALLEE_SAVED)
   #define RBM_CALLEE_TRASH        (RBM_INT_CALLEE_TRASH | RBM_FLT_CALLEE_TRASH)
@@ -522,8 +549,15 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define REG_JUMP_THUNK_PARAM     REG_EAX
   #define RBM_JUMP_THUNK_PARAM     RBM_EAX
 
+#if NOGC_WRITE_BARRIERS
   #define REG_WRITE_BARRIER        REG_EDX
   #define RBM_WRITE_BARRIER        RBM_EDX
+
+  // We don't allow using ebp as a source register. Maybe we should only prevent this for ETW_EBP_FRAMED (but that is always set right now).
+  #define RBM_WRITE_BARRIER_SRC    (RBM_EAX|RBM_ECX|RBM_EBX|RBM_ESI|RBM_EDI)
+
+  #define RBM_CALLEE_TRASH_NOGC    RBM_NONE
+#endif // NOGC_WRITE_BARRIERS
 
   // IL stub's secret parameter (CORJIT_FLG_PUBLISH_SECRET_PARAM)
   #define REG_SECRET_STUB_PARAM    REG_EAX
@@ -648,6 +682,11 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
 
 #ifdef FEATURE_SIMD
   #define ALIGN_SIMD_TYPES         1       // whether SIMD type locals are to be aligned
+#if defined(UNIX_AMD64_ABI) || !defined(FEATURE_AVX_SUPPORT)
+  #define FEATURE_PARTIAL_SIMD_CALLEE_SAVE 0 // Whether SIMD registers are partially saved at calls
+#else // !UNIX_AMD64_ABI && !FEATURE_AVX_SUPPORT
+  #define FEATURE_PARTIAL_SIMD_CALLEE_SAVE 1 // Whether SIMD registers are partially saved at calls
+#endif // !UNIX_AMD64_ABI
 #endif
   #define FEATURE_WRITE_BARRIER    1       // Generate the WriteBarrier calls for GC (currently not the x86-style register-customized barriers)
   #define FEATURE_FIXED_OUT_ARGS   1       // Preallocate the outgoing arg area in the prolog
@@ -655,6 +694,23 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define FEATURE_FASTTAILCALL     1       // Tail calls made as epilog+jmp
   #define FEATURE_TAILCALL_OPT     1       // opportunistic Tail calls (i.e. without ".tail" prefix) made as fast tail calls.
   #define FEATURE_SET_FLAGS        0       // Set to true to force the JIT to mark the trees with GTF_SET_FLAGS when the flags need to be set
+#ifdef    UNIX_AMD64_ABI
+  #define FEATURE_MULTIREG_ARGS_OR_RET  1  // Support for passing and/or returning single values in more than one register
+  #define FEATURE_MULTIREG_ARGS         1  // Support for passing a single argument in more than one register  
+  #define FEATURE_MULTIREG_RET          1  // Support for returning a single value in more than one register
+  #define FEATURE_STRUCT_CLASSIFIER     1  // Uses a classifier function to determine if structs are passed/returned in more than one register
+  #define MAX_PASS_MULTIREG_BYTES      32  // Maximum size of a struct that could be passed in more than one register
+  #define MAX_RET_MULTIREG_BYTES       32  // Maximum size of a struct that could be returned in more than one register
+  #define MAX_ARG_REG_COUNT             2  // Maximum registers used to pass an argument.
+  #define MAX_RET_REG_COUNT             2  // Maximum registers used to return a value.
+#else // !UNIX_AMD64_ABI
+  #define FEATURE_MULTIREG_ARGS_OR_RET  0  // Support for passing and/or returning single values in more than one register
+  #define FEATURE_MULTIREG_ARGS         0  // Support for passing a single argument in more than one register  
+  #define FEATURE_MULTIREG_RET          0  // Support for returning a single value in more than one register  
+  #define MAX_ARG_REG_COUNT             1  // Maximum registers used to pass an argument.
+  #define MAX_RET_REG_COUNT             1  // Maximum registers used to return a value.
+#endif // !UNIX_AMD64_ABI
+
 #ifdef FEATURE_USE_ASM_GC_WRITE_BARRIERS
   #define NOGC_WRITE_BARRIERS      0       // We DO-NOT have specialized WriteBarrier JIT Helpers that DO-NOT trash the RBM_CALLEE_TRASH registers
 #else
@@ -680,9 +736,13 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define REG_FP_FIRST             REG_XMM0
   #define REG_FP_LAST              REG_XMM15
   #define FIRST_FP_ARGREG          REG_XMM0
-  #define LAST_FP_ARGREG           REG_XMM3
-  #define VOLATILE_FP             (RBM_XMM0 | RBM_XMM1 | RBM_XMM2 | RBM_XMM3 | RBM_XMM4 | RBM_XMM5)
-  #define PRESERVED_FP            (RBM_XMM8 | RBM_XMM9 | RBM_XMM10 | RBM_XMM11 | RBM_XMM12 | RBM_XMM13 | RBM_XMM14 | RBM_XMM15)
+
+#ifdef    UNIX_AMD64_ABI
+  #define LAST_FP_ARGREG        REG_XMM7
+#else // !UNIX_AMD64_ABI
+  #define LAST_FP_ARGREG        REG_XMM3
+#endif // !UNIX_AMD64_ABI
+
   #define REGNUM_BITS              6       // number of bits in a REG_*
   #define TINY_REGNUM_BITS         6       // number used in a tiny instrdesc (same)
   #define REGMASK_BITS             32      // number of bits in a REGNUM_MASK
@@ -694,22 +754,26 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define STACK_ALIGN              16      // stack alignment requirement
   #define STACK_ALIGN_SHIFT        3       // Shift-right amount to convert stack size in bytes to size in pointer sized words
 
-#ifdef UNIX_AMD64_ABI
 #if ETW_EBP_FRAMED
-  #define RBM_INT_CALLEE_SAVED    (RBM_EBX|RBM_R12|RBM_R13|RBM_R14|RBM_R15)
+  #define RBM_ETW_FRAMED_EBP        RBM_NONE
+  #define RBM_ETW_FRAMED_EBP_LIST
+  #define REG_ETW_FRAMED_EBP_LIST
+  #define REG_ETW_FRAMED_EBP_COUNT  0
 #else // !ETW_EBP_FRAMED
-  #define RBM_INT_CALLEE_SAVED    (RBM_EBX|RBM_EBP|RBM_R12|RBM_R13|RBM_R14|RBM_R15)
+  #define RBM_ETW_FRAMED_EBP        RBM_EBP
+  #define RBM_ETW_FRAMED_EBP_LIST   RBM_EBP,
+  #define REG_ETW_FRAMED_EBP_LIST   REG_EBP,
+  #define REG_ETW_FRAMED_EBP_COUNT  1
 #endif // !ETW_EBP_FRAMED
+
+#ifdef UNIX_AMD64_ABI
+  #define RBM_INT_CALLEE_SAVED    (RBM_EBX|RBM_ETW_FRAMED_EBP|RBM_R12|RBM_R13|RBM_R14|RBM_R15)
   #define RBM_INT_CALLEE_TRASH    (RBM_EAX|RBM_RDI|RBM_RSI|RBM_EDX|RBM_ECX|RBM_R8|RBM_R9|RBM_R10|RBM_R11)
   #define RBM_FLT_CALLEE_SAVED    (0)
   #define RBM_FLT_CALLEE_TRASH    (RBM_XMM0|RBM_XMM1|RBM_XMM2|RBM_XMM3|RBM_XMM4|RBM_XMM5|RBM_XMM6|RBM_XMM7| \
                                    RBM_XMM8|RBM_XMM9|RBM_XMM10|RBM_XMM11|RBM_XMM12|RBM_XMM13|RBM_XMM14|RBM_XMM15)
 #else // !UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define RBM_INT_CALLEE_SAVED    (RBM_EBX|RBM_ESI|RBM_EDI|RBM_R12|RBM_R13|RBM_R14|RBM_R15)
-#else // ETW_EBP_FRAMED
-  #define RBM_INT_CALLEE_SAVED    (RBM_EBX|RBM_ESI|RBM_EDI|RBM_EBP|RBM_R12|RBM_R13|RBM_R14|RBM_R15)
-#endif // ETW_EBP_FRAMED
+  #define RBM_INT_CALLEE_SAVED    (RBM_EBX|RBM_ESI|RBM_EDI|RBM_ETW_FRAMED_EBP|RBM_R12|RBM_R13|RBM_R14|RBM_R15)
   #define RBM_INT_CALLEE_TRASH    (RBM_EAX|RBM_ECX|RBM_EDX|RBM_R8|RBM_R9|RBM_R10|RBM_R11)
   #define RBM_FLT_CALLEE_SAVED    (RBM_XMM6|RBM_XMM7|RBM_XMM8|RBM_XMM9|RBM_XMM10|RBM_XMM11|RBM_XMM12|RBM_XMM13|RBM_XMM14|RBM_XMM15)
   #define RBM_FLT_CALLEE_TRASH    (RBM_XMM0|RBM_XMM1|RBM_XMM2|RBM_XMM3|RBM_XMM4|RBM_XMM5)
@@ -725,135 +789,69 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
 
   #define RBM_ALLINT              (RBM_INT_CALLEE_SAVED | RBM_INT_CALLEE_TRASH)
 #ifdef UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define RBM_LOWINT              (RBM_EAX|RBM_RDI|RBM_RSI|RBM_EDX|RBM_ECX|RBM_EBX)
-#else // !ETW_EBP_FRAMED
-  #define RBM_LOWINT              (RBM_EAX|RBM_RDI|RBM_RSI|RBM_EDX|RBM_ECX|RBM_EBX|RBM_EBP)
-#endif // !ETW_EBP_FRAMED
+  #define RBM_LOWINT              (RBM_EAX|RBM_RDI|RBM_RSI|RBM_EDX|RBM_ECX|RBM_EBX|RBM_ETW_FRAMED_EBP)
 #else // !UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define RBM_LOWINT              (RBM_EAX|RBM_ECX|RBM_EBX|RBM_ESI|RBM_EDI)
-#else // !ETW_EBP_FRAMED
-  #define RBM_LOWINT              (RBM_EAX|RBM_ECX|RBM_EBX|RBM_EBP|RBM_ESI|RBM_EDI)
-#endif // !ETW_EBP_FRAMED
+  #define RBM_LOWINT              (RBM_EAX|RBM_ECX|RBM_EBX|RBM_ETW_FRAMED_EBP|RBM_ESI|RBM_EDI)
 #endif // !UNIX_AMD64_ABI
 
 #if 0
-#if ETW_EBP_FRAMED
-#define REG_VAR_ORDER            REG_EAX,REG_EDX,REG_ECX,REG_ESI,REG_EDI,REG_EBX, \
+#define REG_VAR_ORDER            REG_EAX,REG_EDX,REG_ECX,REG_ESI,REG_EDI,REG_EBX,REG_ETW_FRAMED_EBP_LIST \
                                  REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-#else // !ETW_EBP_FRAMED
-#define REG_VAR_ORDER            REG_EAX,REG_EDX,REG_ECX,REG_ESI,REG_EDI,REG_EBX,REG_EBP, \
-                                 REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-#endif // !ETW_EBP_FRAMED
-
 #else
   // TEMPORARY ORDER TO AVOID CALLEE-SAVES
   // TODO-CQ: Review this and set appropriately
 #ifdef UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define                        REG_VAR_ORDER \
-                                 REG_EAX,REG_EDI,REG_ESI, \
+  #define REG_VAR_ORDER          REG_EAX,REG_EDI,REG_ESI, \
                                  REG_EDX,REG_ECX,REG_R8,REG_R9, \
-                                 REG_R10,REG_R11,REG_EBX, \
+                                 REG_R10,REG_R11,REG_EBX,REG_ETW_FRAMED_EBP_LIST \
                                  REG_R14,REG_R15,REG_R12,REG_R13
-#else // !ETW_EBP_FRAMED
-  #define                        REG_VAR_ORDER \
-                                 REG_EAX,REG_EDI,REG_ESI, \
-                                 REG_EDX,REG_ECX,REG_R8,REG_R9, \
-                                 REG_R10,REG_R11,REG_EBX,REG_EBP, \
-                                 REG_R14,REG_R15,REG_R12,REG_R13
-#endif // !ETW_EBP_FRAMED
 #else // !UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
   #define REG_VAR_ORDER          REG_EAX,REG_EDX,REG_ECX, \
                                  REG_R8,REG_R9,REG_R10,REG_R11, \
-                                 REG_ESI,REG_EDI,REG_EBX, \
+                                 REG_ESI,REG_EDI,REG_EBX,REG_ETW_FRAMED_EBP_LIST \
                                  REG_R14,REG_R15,REG_R12,REG_R13
-#else // !ETW_EBP_FRAMED
-  #define REG_VAR_ORDER          REG_EAX,REG_EDX,REG_ECX, \
-                                 REG_R8,REG_R9,REG_R10,REG_R11, \
-                                 REG_ESI,REG_EDI,REG_EBX,REG_EBP, \
-                                 REG_R14,REG_R15,REG_R12,REG_R13
-#endif // !ETW_EBP_FRAMED
 #endif // !UNIX_AMD64_ABI
 #endif
 
   #define REG_VAR_ORDER_FLT      REG_XMM0,REG_XMM1,REG_XMM2,REG_XMM3,REG_XMM4,REG_XMM5,REG_XMM6,REG_XMM7,REG_XMM8,REG_XMM9,REG_XMM10,REG_XMM11,REG_XMM12,REG_XMM13,REG_XMM14,REG_XMM15
 
 #ifdef UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define REG_TMP_ORDER          REG_EAX,REG_EDI,REG_ESI,REG_EDX,REG_ECX,REG_EBX, \
+  #define REG_TMP_ORDER          REG_EAX,REG_EDI,REG_ESI,REG_EDX,REG_ECX,REG_EBX,REG_ETW_FRAMED_EBP_LIST \
                                  REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-#else // !ETW_EBP_FRAMED
-  #define REG_TMP_ORDER          REG_EAX,REG_EDI,REG_ESI,REG_EDX,REG_ECX,REG_EBX,REG_EBP, \
-                                 REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-#endif // !ETW_EBP_FRAMED
 #else // !UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define MAX_VAR_ORDER_SIZE     14
-  #define REG_TMP_ORDER          REG_EAX,REG_EDX,REG_ECX,REG_EBX,REG_ESI,REG_EDI, \
+  #define MAX_VAR_ORDER_SIZE     (14 + REG_ETW_FRAMED_EBP_COUNT)
+  #define REG_TMP_ORDER          REG_EAX,REG_EDX,REG_ECX,REG_EBX,REG_ESI,REG_EDI,REG_ETW_FRAMED_EBP_LIST \
                                  REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-#else // !ETW_EBP_FRAMED
-  #define MAX_VAR_ORDER_SIZE     15
-  #define REG_TMP_ORDER          REG_EAX,REG_EDX,REG_ECX,REG_EBX,REG_ESI,REG_EDI,REG_EBP, \
-                                 REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-#endif // !ETW_EBP_FRAMED
 #endif // !UNIX_AMD64_ABI
 
 #ifdef UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define REG_PREDICT_ORDER      REG_EAX,REG_EDI,REG_ESI,REG_EDX,REG_ECX,REG_EBX, \
-                                 REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-  #define CNT_CALLEE_SAVED       (5)
-#else // ETW_EBP_FRAMED
-  #define REG_PREDICT_ORDER      REG_EAX,REG_EDI,REG_ESI,REG_EDX,REG_ECX,REG_EBX,REG_EBP, \
-                                 REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-  #define CNT_CALLEE_SAVED       (6)
-#endif // ETW_EBP_FRAMED
+  #define REG_PREDICT_ORDER        REG_EAX,REG_EDI,REG_ESI,REG_EDX,REG_ECX,REG_EBX,REG_ETW_FRAMED_EBP_LIST \
+                                   REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
+  #define CNT_CALLEE_SAVED         (5 + REG_ETW_FRAMED_EBP_COUNT)
   #define CNT_CALLEE_TRASH         (9)
   #define CNT_CALLEE_ENREG         (CNT_CALLEE_SAVED)
 
   #define CNT_CALLEE_SAVED_FLOAT   (0)
   #define CNT_CALLEE_TRASH_FLOAT   (16)
 
-#if ETW_EBP_FRAMED
-  #define REG_CALLEE_SAVED_ORDER   REG_EBX,REG_R12,REG_R13,REG_R14,REG_R15
-  #define RBM_CALLEE_SAVED_ORDER   RBM_EBX,RBM_R12,RBM_R13,RBM_R14,RBM_R15
-#else // !ETW_EBP_FRAMED
-  #define REG_CALLEE_SAVED_ORDER   REG_EBX,REG_EBP,REG_R12,REG_R13,REG_R14,REG_R15
-  #define RBM_CALLEE_SAVED_ORDER   RBM_EBX,RBM_EBP,RBM_R12,RBM_R13,RBM_R14,RBM_R15
-#endif // !ETW_EBP_FRAMED
-  #define CALLEE_SAVED_REG_MAXSZ   (CNT_CALLEE_SAVED*REGSIZE_BYTES) // RBX, RBP, R12, R13, R14, R15
+  #define REG_CALLEE_SAVED_ORDER   REG_EBX,REG_ETW_FRAMED_EBP_LIST REG_R12,REG_R13,REG_R14,REG_R15
+  #define RBM_CALLEE_SAVED_ORDER   RBM_EBX,RBM_ETW_FRAMED_EBP_LIST RBM_R12,RBM_R13,RBM_R14,RBM_R15
 #else // !UNIX_AMD64_ABI
-#if ETW_EBP_FRAMED
-  #define REG_TMP_ORDER_COUNT      14
-  #define REG_PREDICT_ORDER        REG_EAX,REG_EDX,REG_ECX,REG_EBX,REG_ESI,REG_EDI, \
+  #define REG_TMP_ORDER_COUNT      (14 + REG_ETW_FRAMED_EBP_COUNT)
+  #define REG_PREDICT_ORDER        REG_EAX,REG_EDX,REG_ECX,REG_EBX,REG_ESI,REG_EDI,REG_ETW_FRAMED_EBP_LIST \
                                    REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-  #define CNT_CALLEE_SAVED         (7)
-#else // ETW_EBP_FRAMED
-  #define REG_TMP_ORDER_COUNT      15
-  #define REG_PREDICT_ORDER        REG_EAX,REG_EDX,REG_ECX,REG_EBX,REG_ESI,REG_EDI,REG_EBP, \
-                                   REG_R8,REG_R9,REG_R10,REG_R11,REG_R14,REG_R15,REG_R12,REG_R13
-  #define CNT_CALLEE_SAVED         (8)
-#endif // ETW_EBP_FRAMED
-
+  #define CNT_CALLEE_SAVED         (7 + REG_ETW_FRAMED_EBP_COUNT)
   #define CNT_CALLEE_TRASH         (7)
   #define CNT_CALLEE_ENREG         (CNT_CALLEE_SAVED)
 
   #define CNT_CALLEE_SAVED_FLOAT   (10)
   #define CNT_CALLEE_TRASH_FLOAT   (6)
 
-#if ETW_EBP_FRAMED
-  #define REG_CALLEE_SAVED_ORDER   REG_EBX,REG_ESI,REG_EDI,REG_R12,REG_R13,REG_R14,REG_R15
-  #define RBM_CALLEE_SAVED_ORDER   RBM_EBX,RBM_ESI,RBM_EDI,RBM_R12,RBM_R13,RBM_R14,RBM_R15
-#else // !ETW_EBP_FRAMED
-  #define REG_CALLEE_SAVED_ORDER   REG_EBX,REG_ESI,REG_EDI,REG_EBP,REG_R12,REG_R13,REG_R14,REG_R15
-  #define RBM_CALLEE_SAVED_ORDER   RBM_EBX,RBM_ESI,RBM_EDI,RBM_EBP,RBM_R12,RBM_R13,RBM_R14,RBM_R15
-#endif // !ETW_EBP_FRAMED
-  #define CALLEE_SAVED_REG_MAXSZ   (CNT_CALLEE_SAVED*REGSIZE_BYTES) // RBX, RSI, RDI, RBP, R12, R13, R14, R15
+  #define REG_CALLEE_SAVED_ORDER   REG_EBX,REG_ESI,REG_EDI,REG_ETW_FRAMED_EBP_LIST REG_R12,REG_R13,REG_R14,REG_R15
+  #define RBM_CALLEE_SAVED_ORDER   RBM_EBX,RBM_ESI,RBM_EDI,RBM_ETW_FRAMED_EBP_LIST RBM_R12,RBM_R13,RBM_R14,RBM_R15
 #endif // !UNIX_AMD64_ABI
 
+  #define CALLEE_SAVED_REG_MAXSZ   (CNT_CALLEE_SAVED*REGSIZE_BYTES)
   #define CALLEE_SAVED_FLOAT_MAXSZ (CNT_CALLEE_SAVED_FLOAT*16)
 
   // We reuse the ESP register as a illegal value in the register predictor
@@ -971,9 +969,27 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define REG_LNGRET               REG_EAX
   #define RBM_LNGRET               RBM_EAX
 
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+    #define REG_INTRET_1           REG_RDX
+    #define RBM_INTRET_1           RBM_RDX
+
+    #define REG_LNGRET_1           REG_RDX
+    #define RBM_LNGRET_1           RBM_RDX
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
+
+
   #define REG_FLOATRET             REG_XMM0
   #define RBM_FLOATRET             RBM_XMM0
+  #define REG_DOUBLERET            REG_XMM0
   #define RBM_DOUBLERET            RBM_XMM0
+
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+#define REG_FLOATRET_1             REG_XMM1
+#define RBM_FLOATRET_1             RBM_XMM1
+
+#define REG_DOUBLERET_1            REG_XMM1
+#define RBM_DOUBLERET_1            RBM_XMM1
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
 
   #define REG_FPBASE               REG_EBP
   #define RBM_FPBASE               RBM_EBP
@@ -1111,6 +1127,14 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define FEATURE_FASTTAILCALL     0       // Tail calls made as epilog+jmp
   #define FEATURE_TAILCALL_OPT     0       // opportunistic Tail calls (i.e. without ".tail" prefix) made as fast tail calls.
   #define FEATURE_SET_FLAGS        1       // Set to true to force the JIT to mark the trees with GTF_SET_FLAGS when the flags need to be set
+  #define FEATURE_MULTIREG_ARGS_OR_RET  1  // Support for passing and/or returning single values in more than one register (including HFA support)
+  #define FEATURE_MULTIREG_ARGS         1  // Support for passing a single argument in more than one register (including passing HFAs)
+  #define FEATURE_MULTIREG_RET          1  // Support for returning a single value in more than one register (including HFA returns)
+  #define FEATURE_STRUCT_CLASSIFIER     0  // Uses a classifier function to determine is structs are passed/returned in more than one register
+  #define MAX_PASS_MULTIREG_BYTES      32  // Maximum size of a struct that could be passed in more than one register (Max is an HFA of 4 doubles)
+  #define MAX_RET_MULTIREG_BYTES       32  // Maximum size of a struct that could be returned in more than one register (Max is an HFA of 4 doubles)
+  #define MAX_ARG_REG_COUNT             4  // Maximum registers used to pass an argument.
+  #define MAX_RET_REG_COUNT             4  // Maximum registers used to return a value.
 #ifdef FEATURE_USE_ASM_GC_WRITE_BARRIERS
   #define NOGC_WRITE_BARRIERS      0       // We DO-NOT have specialized WriteBarrier JIT Helpers that DO-NOT trash the RBM_CALLEE_TRASH registers
 #else
@@ -1118,8 +1142,7 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
 #endif
   #define USER_ARGS_COME_LAST      1
   #define EMIT_TRACK_STACK_DEPTH   1       // This is something of a workaround.  For both ARM and AMD64, the frame size is fixed, so we don't really
-                                           // need to track stack depth, but this is currently necessary to
-                                           // get GC information reported at call sites.
+                                           // need to track stack depth, but this is currently necessary to get GC information reported at call sites.
   #define TARGET_POINTER_SIZE      4       // equal to sizeof(void*) and the managed pointer size in bytes for this target
   #define FEATURE_EH               1       // To aid platform bring-up, eliminate exceptional EH clauses (catch, filter, filter-handler, fault) and directly execute 'finally' clauses.
   #define FEATURE_EH_FUNCLETS      1
@@ -1417,6 +1440,14 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
   #define FEATURE_FASTTAILCALL     0       // Tail calls made as epilog+jmp
   #define FEATURE_TAILCALL_OPT     0       // opportunistic Tail calls (i.e. without ".tail" prefix) made as fast tail calls.
   #define FEATURE_SET_FLAGS        1       // Set to true to force the JIT to mark the trees with GTF_SET_FLAGS when the flags need to be set
+  #define FEATURE_MULTIREG_ARGS_OR_RET  1  // Support for passing and/or returning single values in more than one register  
+  #define FEATURE_MULTIREG_ARGS         1  // Support for passing a single argument in more than one register  
+  #define FEATURE_MULTIREG_RET          0  // Support for returning a single value in more than one register  
+  #define FEATURE_STRUCT_CLASSIFIER     0   // Uses a classifier function to determine is structs are passed/returned in more than one register
+  #define MAX_PASS_MULTIREG_BYTES      16   // Maximum size of a struct that could be passed in more than one register
+  #define MAX_ARG_REG_COUNT             2  // Maximum registers used to pass an argument.
+  #define MAX_RET_REG_COUNT             2  // Maximum registers used to return a value.
+
 #ifdef FEATURE_USE_ASM_GC_WRITE_BARRIERS
   #define NOGC_WRITE_BARRIERS      1       // We have specialized WriteBarrier JIT Helpers that DO-NOT trash the RBM_CALLEE_TRASH registers
 #else
@@ -1424,8 +1455,7 @@ typedef unsigned short          regPairNoSmall; // arm: need 12 bits
 #endif
   #define USER_ARGS_COME_LAST      1
   #define EMIT_TRACK_STACK_DEPTH   1       // This is something of a workaround.  For both ARM and AMD64, the frame size is fixed, so we don't really
-                                           // need to track stack depth, but this is currently necessary to
-                                           // get GC information reported at call sites.
+                                           // need to track stack depth, but this is currently necessary to get GC information reported at call sites.
   #define TARGET_POINTER_SIZE      8       // equal to sizeof(void*) and the managed pointer size in bytes for this target
   #define FEATURE_EH               1       // To aid platform bring-up, eliminate exceptional EH clauses (catch, filter, filter-handler, fault) and directly execute 'finally' clauses.
   #define FEATURE_EH_FUNCLETS      1
@@ -1872,7 +1902,7 @@ extern const regMaskSmall  regMasks[REG_COUNT];
 inline regMaskTP    genRegMask(regNumber reg)
 {
     assert((unsigned)reg < ArrLen(regMasks));
-#if defined _TARGET_AMD64_
+#ifdef _TARGET_AMD64_
     // shift is faster than a L1 hit on modern x86
     // (L1 latency on sandy bridge is 4 cycles for [base] and 5 for [base + index*c] )
     // the reason this is AMD-only is because the x86 BE will try to get reg masks for REG_STK

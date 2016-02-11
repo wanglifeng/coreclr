@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 //
@@ -13,6 +12,17 @@
 #include "mscoree.h"
 #include <Logger.h>
 #include "palclr.h"
+
+// Utility macro for testing whether or not a flag is set.
+#define HAS_FLAG(value, flag) (((value) & (flag)) == (flag))
+
+// Environment variable for setting whether or not to use Server GC.
+// Off by default.
+static const wchar_t *serverGcVar = W("CORECLR_SERVER_GC");
+
+// Environment variable for setting whether or not to use Concurrent GC.
+// On by default.
+static const wchar_t *concurrentGcVar = W("CORECLR_CONCURRENT_GC");
 
 // The name of the CoreCLR native runtime DLL.
 static const wchar_t *coreCLRDll = W("CoreCLR.dll");
@@ -64,10 +74,10 @@ public:
 class HostEnvironment 
 {
     // The path to this module
-    wchar_t m_hostPath[MAX_PATH];
+    wchar_t m_hostPath[MAX_LONGPATH];
 
     // The path to the directory containing this module
-    wchar_t m_hostDirectoryPath[MAX_PATH];
+    wchar_t m_hostDirectoryPath[MAX_LONGPATH];
 
     // The name of this module, without the path
     wchar_t *m_hostExeName;
@@ -87,7 +97,7 @@ class HostEnvironment
     // On failure returns nullptr.
     HMODULE TryLoadCoreCLR(const wchar_t* directoryPath) {
 
-        wchar_t coreCLRPath[MAX_PATH];
+        wchar_t coreCLRPath[MAX_LONGPATH];
         wcscpy_s(coreCLRPath, directoryPath);
         wcscat_s(coreCLRPath, coreCLRDll);
 
@@ -107,8 +117,8 @@ class HostEnvironment
             return nullptr;
         }
 
-        wchar_t coreCLRLoadedPath[MAX_PATH];
-        ::GetModuleFileNameW(result, coreCLRLoadedPath, MAX_PATH);
+        wchar_t coreCLRLoadedPath[MAX_LONGPATH];
+        ::GetModuleFileNameW(result, coreCLRLoadedPath, MAX_LONGPATH);
 
         *m_log << W("Loaded: ") << coreCLRLoadedPath << Logger::endl;
 
@@ -117,13 +127,13 @@ class HostEnvironment
 
 public:
     // The path to the directory that CoreCLR is in
-    wchar_t m_coreCLRDirectoryPath[MAX_PATH];
+    wchar_t m_coreCLRDirectoryPath[MAX_LONGPATH];
 
     HostEnvironment(Logger *logger) 
         : m_log(logger), m_CLRRuntimeHost(nullptr) {
 
             // Discover the path to this exe's module. All other files are expected to be in the same directory.
-            DWORD thisModuleLength = ::GetModuleFileNameW(::GetModuleHandleW(nullptr), m_hostPath, MAX_PATH);
+            DWORD thisModuleLength = ::GetModuleFileNameW(::GetModuleHandleW(nullptr), m_hostPath, MAX_LONGPATH);
 
             // Search for the last backslash in the host path.
             int lastBackslashIndex;
@@ -142,12 +152,12 @@ public:
             *m_log << W("Host directory: ")  << m_hostDirectoryPath << Logger::endl;
 
             // Check for %CORE_ROOT% and try to load CoreCLR.dll from it if it is set
-            wchar_t coreRoot[MAX_PATH];
+            wchar_t coreRoot[MAX_LONGPATH];
             size_t outSize;
 			m_coreCLRModule = NULL; // Initialize this here since we don't call TryLoadCoreCLR if CORE_ROOT is unset.
-            if (_wgetenv_s(&outSize, coreRoot, MAX_PATH, W("CORE_ROOT")) == 0 && outSize > 0)
+            if (_wgetenv_s(&outSize, coreRoot, MAX_LONGPATH, W("CORE_ROOT")) == 0 && outSize > 0)
             {
-                wcscat_s(coreRoot, MAX_PATH, W("\\"));
+                wcscat_s(coreRoot, MAX_LONGPATH, W("\\"));
                 m_coreCLRModule = TryLoadCoreCLR(coreRoot);
             }
             else
@@ -165,8 +175,8 @@ public:
             if (!m_coreCLRModule) {
 
                 // Failed to load. Try to load from the well-known location.
-                wchar_t coreCLRInstallPath[MAX_PATH];
-                ::ExpandEnvironmentStringsW(coreCLRInstallDirectory, coreCLRInstallPath, MAX_PATH);
+                wchar_t coreCLRInstallPath[MAX_LONGPATH];
+                ::ExpandEnvironmentStringsW(coreCLRInstallDirectory, coreCLRInstallPath, MAX_LONGPATH);
                 m_coreCLRModule = TryLoadCoreCLR(coreCLRInstallPath);
 
             }
@@ -174,7 +184,7 @@ public:
             if (m_coreCLRModule) {
 
                 // Save the directory that CoreCLR was found in
-                DWORD modulePathLength = ::GetModuleFileNameW(m_coreCLRModule, m_coreCLRDirectoryPath, MAX_PATH);
+                DWORD modulePathLength = ::GetModuleFileNameW(m_coreCLRModule, m_coreCLRDirectoryPath, MAX_LONGPATH);
 
                 // Search for the last backslash and terminate it there to keep just the directory path with trailing slash
                 for (lastBackslashIndex = modulePathLength-1; lastBackslashIndex >= 0; lastBackslashIndex--) {
@@ -198,17 +208,17 @@ public:
         }
     }
 
-    bool TPAListContainsFile(wchar_t* fileNameWithoutExtension, wchar_t** rgTPAExtensions, int countExtensions)
+    bool TPAListContainsFile(_In_z_ wchar_t* fileNameWithoutExtension, _In_reads_(countExtensions) wchar_t** rgTPAExtensions, int countExtensions)
     {
         if (!m_tpaList.CStr()) return false;
 
         for (int iExtension = 0; iExtension < countExtensions; iExtension++)
         {
-            wchar_t fileName[MAX_PATH];
-            wcscpy_s(fileName, MAX_PATH, W("\\")); // So that we don't match other files that end with the current file name
-            wcscat_s(fileName, MAX_PATH, fileNameWithoutExtension);
-            wcscat_s(fileName, MAX_PATH, rgTPAExtensions[iExtension] + 1);
-            wcscat_s(fileName, MAX_PATH, W(";")); // So that we don't match other files that begin with the current file name
+            wchar_t fileName[MAX_LONGPATH];
+            wcscpy_s(fileName, MAX_LONGPATH, W("\\")); // So that we don't match other files that end with the current file name
+            wcscat_s(fileName, MAX_LONGPATH, fileNameWithoutExtension);
+            wcscat_s(fileName, MAX_LONGPATH, rgTPAExtensions[iExtension] + 1);
+            wcscat_s(fileName, MAX_LONGPATH, W(";")); // So that we don't match other files that begin with the current file name
 
             if (wcsstr(m_tpaList.CStr(), fileName))
             {
@@ -218,7 +228,7 @@ public:
         return false;
     }
 
-    void RemoveExtensionAndNi(wchar_t* fileName)
+    void RemoveExtensionAndNi(_In_z_ wchar_t* fileName)
     {
         // Remove extension, if it exists
         wchar_t* extension = wcsrchr(fileName, W('.')); 
@@ -238,18 +248,18 @@ public:
         }
     }
 
-    void AddFilesFromDirectoryToTPAList(wchar_t* targetPath, wchar_t** rgTPAExtensions, int countExtensions)
+    void AddFilesFromDirectoryToTPAList(_In_z_ wchar_t* targetPath, _In_reads_(countExtensions) wchar_t** rgTPAExtensions, int countExtensions)
     {
         *m_log << W("Adding assemblies from ") << targetPath << W(" to the TPA list") << Logger::endl;
-        wchar_t assemblyPath[MAX_PATH];
+        wchar_t assemblyPath[MAX_LONGPATH];
 
         for (int iExtension = 0; iExtension < countExtensions; iExtension++)
         {
-            wcscpy_s(assemblyPath, MAX_PATH, targetPath);
+            wcscpy_s(assemblyPath, MAX_LONGPATH, targetPath);
 
             const size_t dirLength = wcslen(targetPath);
             wchar_t* const fileNameBuffer = assemblyPath + dirLength;
-            const size_t fileNameBufferSize = MAX_PATH - dirLength;
+            const size_t fileNameBufferSize = MAX_LONGPATH - dirLength;
 
             wcscat_s(assemblyPath, rgTPAExtensions[iExtension]);
             WIN32_FIND_DATA data;
@@ -271,8 +281,8 @@ public:
                         }
 
                         // Remove extension
-                        wchar_t fileNameWithoutExtension[MAX_PATH];
-                        wcscpy_s(fileNameWithoutExtension, MAX_PATH, data.cFileName);
+                        wchar_t fileNameWithoutExtension[MAX_PATH_FNAME];
+                        wcscpy_s(fileNameWithoutExtension, MAX_PATH_FNAME, data.cFileName);
 
                         RemoveExtensionAndNi(fileNameWithoutExtension);
 
@@ -311,11 +321,11 @@ public:
                         };
 
             // Add files from %CORE_LIBRARIES% if specified
-            wchar_t coreLibraries[MAX_PATH];
+            wchar_t coreLibraries[MAX_LONGPATH];
             size_t outSize;
-            if (_wgetenv_s(&outSize, coreLibraries, MAX_PATH, W("CORE_LIBRARIES")) == 0 && outSize > 0)
+            if (_wgetenv_s(&outSize, coreLibraries, MAX_LONGPATH, W("CORE_LIBRARIES")) == 0 && outSize > 0)
             {
-                wcscat_s(coreLibraries, MAX_PATH, W("\\"));
+                wcscat_s(coreLibraries, MAX_LONGPATH, W("\\"));
                 AddFilesFromDirectoryToTPAList(coreLibraries, rgTPAExtensions, _countof(rgTPAExtensions));
             }
             else
@@ -375,6 +385,39 @@ public:
 
 };
 
+// Creates the startup flags for the runtime, starting with the default startup
+// flags and adding or removing from them based on environment variables. Only
+// two environment variables are respected right now: serverGcVar, controlling
+// Server GC, and concurrentGcVar, controlling Concurrent GC.
+STARTUP_FLAGS CreateStartupFlags() {
+    auto initialFlags = 
+        static_cast<STARTUP_FLAGS>(
+            STARTUP_FLAGS::STARTUP_LOADER_OPTIMIZATION_SINGLE_DOMAIN | 
+            STARTUP_FLAGS::STARTUP_SINGLE_APPDOMAIN |
+            STARTUP_FLAGS::STARTUP_CONCURRENT_GC);
+        
+    // server GC is off by default, concurrent GC is on by default.
+    auto checkVariable = [&](STARTUP_FLAGS flag, const wchar_t *var) {
+        wchar_t result[25];
+        size_t outsize;
+        if (_wgetenv_s(&outsize, result, 25, var) == 0 && outsize > 0) {
+            // set the flag if the var is present and set to 1,
+            // clear the flag if the var isp resent and set to 0.
+            // Otherwise, ignore it.
+            if (_wcsicmp(result, W("1")) == 0) {
+                initialFlags = static_cast<STARTUP_FLAGS>(initialFlags | flag);
+            } else if (_wcsicmp(result, W("0")) == 0) {
+                initialFlags = static_cast<STARTUP_FLAGS>(initialFlags & ~flag);
+            }
+        }
+    };
+    
+    checkVariable(STARTUP_FLAGS::STARTUP_SERVER_GC, serverGcVar);
+    checkVariable(STARTUP_FLAGS::STARTUP_CONCURRENT_GC, concurrentGcVar);
+        
+    return initialFlags;
+}
+
 bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbose, const bool waitForDebugger, DWORD &exitCode)
 {
 
@@ -395,14 +438,14 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
         return false;
     }
 
-    wchar_t appPath[MAX_PATH] = W("");
-    wchar_t appNiPath[MAX_PATH * 2] = W("");
-    wchar_t managedAssemblyFullName[MAX_PATH] = W("");
-    wchar_t appLocalWinmetadata[MAX_PATH] = W("");
+    wchar_t appPath[MAX_LONGPATH] = W("");
+    wchar_t appNiPath[MAX_LONGPATH * 2] = W("");
+    wchar_t managedAssemblyFullName[MAX_LONGPATH] = W("");
+    wchar_t appLocalWinmetadata[MAX_LONGPATH] = W("");
     
     wchar_t* filePart = NULL;
     
-    if (!::GetFullPathName(exeName, MAX_PATH, appPath, &filePart)) {
+    if (!::GetFullPathName(exeName, MAX_LONGPATH, appPath, &filePart)) {
         log << W("Failed to get full path: ") << exeName << Logger::endl;
         log << W("Error code: ") << GetLastError() << Logger::endl;
         return false;
@@ -415,7 +458,7 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
     log << W("Loading: ") << managedAssemblyFullName << Logger::endl;
    
     wcscpy_s(appLocalWinmetadata, appPath);
-    wcscat(appLocalWinmetadata, W("\\WinMetadata"));
+    wcscat_s(appLocalWinmetadata, W("\\WinMetadata"));
    
     DWORD dwAttrib = ::GetFileAttributes(appLocalWinmetadata);
     bool appLocalWinMDexists = dwAttrib != INVALID_FILE_ATTRIBUTES && (dwAttrib & FILE_ATTRIBUTE_DIRECTORY);
@@ -424,23 +467,23 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
         wcscpy_s(appLocalWinmetadata, W(""));
     }
     wcscpy_s(appNiPath, appPath);
-    wcscat(appNiPath, W("NI"));
-    wcscat_s(appNiPath, MAX_PATH * 2, W(";"));
-    wcscat_s(appNiPath, MAX_PATH * 2, appPath);
+    wcscat_s(appNiPath, W("NI"));
+    wcscat_s(appNiPath, MAX_LONGPATH * 2, W(";"));
+    wcscat_s(appNiPath, MAX_LONGPATH * 2, appPath);
 
     // Construct native search directory paths
-    wchar_t nativeDllSearchDirs[MAX_PATH * 3];
+    wchar_t nativeDllSearchDirs[MAX_LONGPATH * 3];
 
     wcscpy_s(nativeDllSearchDirs, appPath);
-    wchar_t coreLibraries[MAX_PATH];
+    wchar_t coreLibraries[MAX_LONGPATH];
     size_t outSize;
-    if (_wgetenv_s(&outSize, coreLibraries, MAX_PATH, W("CORE_LIBRARIES")) == 0 && outSize > 0)
+    if (_wgetenv_s(&outSize, coreLibraries, MAX_LONGPATH, W("CORE_LIBRARIES")) == 0 && outSize > 0)
     {
-        wcscat_s(nativeDllSearchDirs, MAX_PATH * 3, W(";"));
-        wcscat_s(nativeDllSearchDirs, MAX_PATH * 3, coreLibraries);
+        wcscat_s(nativeDllSearchDirs, MAX_LONGPATH * 3, W(";"));
+        wcscat_s(nativeDllSearchDirs, MAX_LONGPATH * 3, coreLibraries);
     }
-    wcscat_s(nativeDllSearchDirs, MAX_PATH * 3, W(";"));
-    wcscat_s(nativeDllSearchDirs, MAX_PATH * 3, hostEnvironment.m_coreCLRDirectoryPath);
+    wcscat_s(nativeDllSearchDirs, MAX_LONGPATH * 3, W(";"));
+    wcscat_s(nativeDllSearchDirs, MAX_LONGPATH * 3, hostEnvironment.m_coreCLRDirectoryPath);
 
     // Start the CoreCLR
 
@@ -450,13 +493,15 @@ bool TryRun(const int argc, const wchar_t* argv[], Logger &log, const bool verbo
     }
 
     HRESULT hr;
-
+    
+    
+    STARTUP_FLAGS flags = CreateStartupFlags();
     log << W("Setting ICLRRuntimeHost2 startup flags") << Logger::endl;
+    log << W("Server GC enabled: ") << HAS_FLAG(flags, STARTUP_FLAGS::STARTUP_SERVER_GC) << Logger::endl;
+    log << W("Concurrent GC enabled: ") << HAS_FLAG(flags, STARTUP_FLAGS::STARTUP_CONCURRENT_GC) << Logger::endl;
 
     // Default startup flags
-    hr = host->SetStartupFlags((STARTUP_FLAGS)
-        (STARTUP_FLAGS::STARTUP_LOADER_OPTIMIZATION_SINGLE_DOMAIN | 
-        STARTUP_FLAGS::STARTUP_SINGLE_APPDOMAIN)); 
+    hr = host->SetStartupFlags(flags);
     if (FAILED(hr)) {
         log << W("Failed to set startup flags. ERRORCODE: ") << Logger::hresult << hr << Logger::endl;
         return false;

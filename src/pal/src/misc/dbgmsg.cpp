@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -84,6 +83,7 @@ static const char *dbg_channel_names[]=
     "LOADER",
     "HANDLE",
     "SHMEM",
+    "PROCESS",
     "THREAD",
     "EXCEPT",
     "CRT",
@@ -547,17 +547,14 @@ int DBG_printf_gcc(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
     InternalLeaveCriticalSection(pthrCurrent, &fprintf_crit_section);
 
     /* flush the output to file */
-    /* Can call InternalFflush since InternalFflush does not have ENTRY/LOGEXIT 
-    macros. If that changes, then this will need to be switched back to calling the 
-    cruntime fflush with some other protection from suspension. */    
-    if (InternalFflush(pthrCurrent, output_file) != 0)
+    if ( fflush(output_file) != 0 )
     {
         fprintf(stderr, "ERROR : fflush() failed errno:%d (%s)\n", 
                 errno, strerror(errno));
     }
 
     // Some systems support displaying a GUI dialog. We attempt this only for asserts.
-    if (level == DLI_ASSERT)
+    if ( level == DLI_ASSERT )
         PAL_DisplayDialog("PAL ASSERT", buffer);
 
     if ( old_errno != errno )
@@ -657,11 +654,7 @@ int DBG_printf_c99(DBG_CHANNEL_ID channel, DBG_LEVEL_ID level, BOOL bHeader,
     if(call_count>5)
     {
         call_count=0;
-        /* Can call InternalFflush since InternalFflush does not have
-        ENTRY/LOGEXIT macros. If that changes, then this will need
-        to be switched back to calling the cruntime fflush with some 
-        other protection from suspension. */
-        if (InternalFflush(pthrCurrent, output_file) != 0)
+        if ( fflush(output_file) != 0 )
         {
             fprintf(stderr, "ERROR : fflush() failed errno:%d (%s)\n", 
                    errno, strerror(errno));

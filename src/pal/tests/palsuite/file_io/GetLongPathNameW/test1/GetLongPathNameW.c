@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=====================================================================
 **
@@ -36,7 +35,7 @@ int __cdecl main(int argc, char *argv[])
 
 #if WIN32
     DWORD dwRc = 0;
-    WCHAR szwReturnedPath[MAX_PATH];
+    WCHAR szwReturnedPath[MAX_LONGPATH];
     WCHAR szwSmallBuff[3];
     const char szShortPathName[] = {"testing"};
     const char szLongPathName[] = {"This_is_a_long_directory_name"};
@@ -51,7 +50,7 @@ int __cdecl main(int argc, char *argv[])
         return FAIL;
     }
 
-    memset(szwReturnedPath, 0, MAX_PATH*sizeof(WCHAR));
+    memset(szwReturnedPath, 0, MAX_LONGPATH*sizeof(WCHAR));
     memset(szwSmallBuff, 0, 3*sizeof(WCHAR));
     wLongPathPtr = convert((char*)szLongPathName);
     wShortPathPtr = convert((char*)szShortenedPathName);
@@ -62,7 +61,7 @@ int __cdecl main(int argc, char *argv[])
 
 
     /* attempt call on an invalid short path name */
-    dwRc = GetLongPathNameW(wShortPathPtr, szwReturnedPath, MAX_PATH);
+    dwRc = GetLongPathNameW(wShortPathPtr, szwReturnedPath, MAX_LONGPATH);
     if (dwRc != 0)
     {
         Trace("GetLongPathNameW: ERROR -> Call made with an invalid short "
@@ -76,7 +75,7 @@ int __cdecl main(int argc, char *argv[])
 
 
     /* attempt call on an invalid long path name */
-    dwRc = GetLongPathNameW(wLongPathPtr, szwReturnedPath, MAX_PATH);
+    dwRc = GetLongPathNameW(wLongPathPtr, szwReturnedPath, MAX_LONGPATH);
     if (dwRc != 0)
     {
         Trace("GetLongPathNameW: ERROR -> Call made with an invalid long "
@@ -102,8 +101,8 @@ int __cdecl main(int argc, char *argv[])
 
 
     /* get the long path name */
-    memset(szwReturnedPath, 0, MAX_PATH*sizeof(WCHAR));
-    dwRc = GetLongPathNameW(wShortPathPtr, szwReturnedPath, MAX_PATH);
+    memset(szwReturnedPath, 0, MAX_LONGPATH*sizeof(WCHAR));
+    dwRc = GetLongPathNameW(wShortPathPtr, szwReturnedPath, MAX_LONGPATH);
     if (dwRc == 0)
     {
         Trace("GetLongPathNameW: ERROR -> failed with an error"
@@ -190,8 +189,8 @@ int __cdecl main(int argc, char *argv[])
 
 
     /* get the long path name */
-    memset(szwReturnedPath, 0, MAX_PATH*sizeof(WCHAR));
-    dwRc = GetLongPathNameW(wShortPathPtr, szwReturnedPath, MAX_PATH);
+    memset(szwReturnedPath, 0, MAX_LONGPATH*sizeof(WCHAR));
+    dwRc = GetLongPathNameW(wShortPathPtr, szwReturnedPath, MAX_LONGPATH);
     if (dwRc == 0)
     {
         Trace("GetLongPathNameW: ERROR -> failed with an error"

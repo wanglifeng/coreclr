@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -494,7 +493,7 @@ void Assembly::Terminate( BOOL signalProfiler )
     if (this->m_fTerminated)
         return;
     
-    delete m_pSharedSecurityDesc;
+    Security::DeleteSharedSecurityDescriptor(m_pSharedSecurityDesc);
     m_pSharedSecurityDesc = NULL;
 
     if (m_pClassLoader != NULL)
@@ -2649,7 +2648,7 @@ static void RunMainPost()
     }
 }
 
-INT32 Assembly::ExecuteMainMethod(PTRARRAYREF *stringArgs)
+INT32 Assembly::ExecuteMainMethod(PTRARRAYREF *stringArgs, BOOL waitForOtherThreads)
 {
     CONTRACTL
     {
@@ -2722,7 +2721,7 @@ INT32 Assembly::ExecuteMainMethod(PTRARRAYREF *stringArgs)
     //to decide when the process should get torn down.  So, don't call it from
     // AppDomain.ExecuteAssembly()
     if (pMeth) {
-        if (stringArgs == NULL)
+        if (waitForOtherThreads)
             RunMainPost();
     }
     else {
@@ -4301,7 +4300,7 @@ void Assembly::WriteBreadcrumb(const SString &ssDisplayName)
 {
     STANDARD_VM_CONTRACT;
 
-    WCHAR path[MAX_PATH];
+    WCHAR path[MAX_LONGPATH];
     HRESULT hr = WszSHGetFolderPath(NULL, CSIDL_COMMON_APPDATA, NULL, SHGFP_TYPE_CURRENT, ARRAYSIZE(path), path);
     if (hr != S_OK)
     {
@@ -5127,7 +5126,7 @@ ExistingOobAssemblyList::ExistingOobAssemblyList()
 
     for (DWORD i = 0; ; i++)
     {
-        WCHAR name[MAX_PATH + 1];
+        WCHAR name[MAX_PATH_FNAME + 1];
         DWORD cchName = ARRAYSIZE(name);
         status = RegEnumKeyExW(hKey, i, name, &cchName, NULL, NULL, NULL, NULL);
 

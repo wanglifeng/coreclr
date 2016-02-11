@@ -37,6 +37,7 @@
         <CDefines Condition="'$(FeatureDbgipcTransportVM)' == 'true'">$(CDefines);FEATURE_DBGIPC_TRANSPORT_VM</CDefines>
         <CDefines Condition="'$(FeatureDbgPublish)' == 'true'">$(CDefines);FEATURE_DBG_PUBLISH</CDefines>
         <CDefines Condition="'$(FeatureEventTrace)' == 'true'">$(CDefines);FEATURE_EVENT_TRACE</CDefines>
+        <CDefines Condition="'$(FeatureXplatEventSource)' == 'true'">$(CDefines);FEATURE_EVENTSOURCE_XPLAT</CDefines>
         <CDefines Condition="'$(FeatureExceptionDispatchInfo)' == 'true'">$(CDefines);FEATURE_EXCEPTIONDISPATCHINFO</CDefines>
         <CDefines Condition="'$(FeatureExceptionNotifications)' == 'true'">$(CDefines);FEATURE_EXCEPTION_NOTIFICATIONS</CDefines>
         <CDefines Condition="'$(FeatureFrameworkInternal)' == 'true'">$(CDefines);FEATURE_FRAMEWORK_INTERNAL</CDefines>
@@ -123,7 +124,6 @@
         <CDefines Condition="'$(UseStl)' == 'true'">$(CDefines);USE_STL</CDefines>
         <CDefines Condition="'$(FeatureMulticoreJIT)' == 'true'">$(CDefines);FEATURE_MULTICOREJIT</CDefines>
         <CDefines Condition="'$(FeatureUseAsmGCWriteBarriers)' == 'true'">$(CDefines);FEATURE_USE_ASM_GC_WRITE_BARRIERS</CDefines>
-        <CDefines Condition="'$(MDILGenerator)' == 'true'">$(CDefines);MDIL</CDefines>
         <CDefines Condition="'$(BinderDebugLog)' == 'true'">$(CDefines);BINDER_DEBUG_LOG</CDefines>
         <CDefines Condition="'$(FeatureSymDiff)' == 'true'">$(CDefines);FEATURE_SYMDIFF</CDefines>
         <CDefines Condition="'$(FeatureWinDbAppCompat)' == 'true'">$(CDefines);FEATURE_WIN_DB_APPCOMPAT</CDefines>
@@ -190,6 +190,7 @@
         <DefineConstants Condition="'$(FeatureNongenericCollections)' == 'true'">$(DefineConstants);FEATURE_NONGENERIC_COLLECTIONS</DefineConstants>
         <DefineConstants Condition="'$(FeatureNormIdnaOnly)' == 'true'">$(DefineConstants);FEATURE_NORM_IDNA_ONLY</DefineConstants>
         <DefineConstants Condition="'$(FeaturePal)' == 'true'">$(DefineConstants);FEATURE_PAL</DefineConstants>
+        <DefineConstants Condition="'$(FeatureXplatEventSource)' == 'true'">$(DefineConstants);FEATURE_EVENTSOURCE_XPLAT</DefineConstants>
         <DefineConstants Condition="'$(FeaturePerfmon)' == 'true'">$(DefineConstants);FEATURE_PERFMON</DefineConstants>
         <DefineConstants Condition="'$(FeaturePls)' == 'true'">$(DefineConstants);FEATURE_PLS</DefineConstants>
         <DefineConstants Condition="'$(FeatureRandomizedStringHashing)' == 'true'">$(DefineConstants);FEATURE_RANDOMIZED_STRING_HASHING</DefineConstants>

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // DacDbiImpl.h
 // 
@@ -43,7 +42,7 @@ public:
     DacDbiInterfaceImpl(ICorDebugDataTarget * pTarget, CORDB_ADDRESS baseAddress, IAllocator * pAllocator, IMetaDataLookup * pLookup);
 
     // Destructor.
-    ~DacDbiInterfaceImpl(void);
+    virtual ~DacDbiInterfaceImpl(void);
 
     // Overridden from ClrDataAccess. Gets an internal metadata importer for the file.
     virtual IMDInternalImport* GetMDImport(
@@ -642,6 +641,9 @@ public:
 // CordbAssembly, CordbModule
 // ============================================================================
  
+    using ClrDataAccess::GetModuleData;
+    using ClrDataAccess::GetAddressType;
+
 public:
     // Get the full path and file name to the assembly's manifest module.
     BOOL GetAssemblyPath(VMPTR_Assembly  vmAssembly, 

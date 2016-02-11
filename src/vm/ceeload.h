@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: CEELOAD.H
 //
@@ -1942,6 +1941,8 @@ protected:
 
     BOOL IsManifest();
 
+    void ApplyMetaData();
+
 #ifdef FEATURE_MIXEDMODE
     void FixupVTables();
 #endif 
@@ -2029,28 +2030,13 @@ protected:
         return (IsEditAndContinueCapable()) && ((m_dwTransientFlags & IS_EDIT_AND_CONTINUE) != 0); 
     }
 
-    BOOL IsEditAndContinueCapable(); 
+    BOOL IsEditAndContinueCapable();
     
     BOOL IsIStream() { LIMITED_METHOD_CONTRACT; return GetFile()->IsIStream(); }
 
     BOOL IsSystem() { WRAPPER_NO_CONTRACT; SUPPORTS_DAC; return m_file->IsSystem(); }
 
-    static BOOL IsEditAndContinueCapable(PEFile *file) 
-    { 
-        CONTRACTL
-        {
-            NOTHROW;
-            GC_NOTRIGGER;
-            SO_TOLERANT;
-            MODE_ANY;
-            SUPPORTS_DAC;
-        }
-        CONTRACTL_END;
-
-
-        // Some modules are never EnC-capable
-        return ! (file->IsSystem() || file->IsResource() || file->HasNativeImage() || file->IsDynamic());
-    }
+    static BOOL IsEditAndContinueCapable(Assembly *pAssembly, PEFile *file);
 
     void EnableEditAndContinue()
     {
@@ -3684,6 +3670,7 @@ private:
     // If true, then only other transient modules can depend on this module.
     bool m_fIsTransient;
 
+#if !defined DACCESS_COMPILE && !defined CROSSGEN_COMPILE
     // Returns true iff metadata capturing is suppressed
     bool IsMetadataCaptureSuppressed();
 
@@ -3703,8 +3690,8 @@ private:
         pModule->ResumeMetadataCapture();
     }
 
-
     ReflectionModule(Assembly *pAssembly, mdFile token, PEFile *pFile);
+#endif // !DACCESS_COMPILE && !CROSSGEN_COMPILE
 
 public:
 
@@ -3713,14 +3700,13 @@ public:
     PTR_SBuffer GetDynamicMetadataBuffer() const;
 #endif
 
+#if !defined DACCESS_COMPILE && !defined CROSSGEN_COMPILE
     static ReflectionModule *Create(Assembly *pAssembly, PEFile *pFile, AllocMemTracker *pamTracker, LPCWSTR szName, BOOL fIsTransient);
-
     void Initialize(AllocMemTracker *pamTracker, LPCWSTR szName);
-
     void Destruct();
-#ifndef DACCESS_COMPILE    
+
     void ReleaseILData();
-#endif
+#endif // !DACCESS_COMPILE && !CROSSGEN_COMPILE
 
     // Overides functions to access sections
     virtual TADDR GetIL(RVA target);
@@ -3784,17 +3770,14 @@ public:
     }
 
 #ifndef DACCESS_COMPILE
+#ifndef CROSSGEN_COMPILE
 
     typedef Wrapper<
         ReflectionModule*, 
         ReflectionModule::SuppressCaptureWrapper, 
         ReflectionModule::ResumeCaptureWrapper> SuppressMetadataCaptureHolder;
+#endif // !CROSSGEN_COMPILE
 
-
-
-    // Eagerly serialize the metadata to a buffer that the debugger can retrieve.
-    void CaptureModuleMetaDataToMemory();
-    
     HRESULT SetISymUnmanagedWriter(ISymUnmanagedWriter *pWriter)
     {
         CONTRACTL
@@ -3823,6 +3806,9 @@ public:
         return S_OK;
     }
 #endif // !DACCESS_COMPILE
+
+    // Eagerly serialize the metadata to a buffer that the debugger can retrieve.
+    void CaptureModuleMetaDataToMemory();
 };
 
 // Module holders

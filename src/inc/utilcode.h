@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // UtilCode.h
 //
@@ -30,7 +29,12 @@
 #include "winnls.h"
 #include "check.h"
 #include "safemath.h"
+
+#ifdef PAL_STDCPP_COMPAT
+#include <type_traits>
+#else
 #include "clr_std/type_traits"
+#endif
 
 #include "contract.h"
 #include "entrypoints.h"
@@ -187,6 +191,12 @@ typedef LPSTR   LPUTF8;
 #ifndef sizeofmember
 // Returns the size of a class or struct member.
 #define sizeofmember(c,m) (sizeof(((c*)0)->m))
+#endif
+
+#if defined(_MSC_VER) && _MSC_VER < 1900
+#define NOEXCEPT
+#else
+#define NOEXCEPT noexcept
 #endif
 
 //=--------------------------------------------------------------------------=
@@ -502,14 +512,14 @@ inline void *__cdecl operator new(size_t, void *_P)
 void * __cdecl
 operator new(size_t n);
 
-_Ret_bytecap_(_Size) void * __cdecl
+_Ret_bytecap_(n) void * __cdecl
 operator new[](size_t n);
 
 void __cdecl
-operator delete(void *p);
+operator delete(void *p) NOEXCEPT;
 
 void __cdecl
-operator delete[](void *p);
+operator delete[](void *p) NOEXCEPT;
 
 #ifdef _DEBUG_IMPL
 HRESULT _OutOfMemory(LPCSTR szFile, int iLine);
@@ -1151,7 +1161,7 @@ void    SplitPathInterior(
     __out_opt LPCWSTR *pwszFileName, __out_opt size_t *pcchFileName,
     __out_opt LPCWSTR *pwszExt,      __out_opt size_t *pcchExt);
 
-void    MakePath(__out_ecount (MAX_PATH) register WCHAR *path, 
+void    MakePath(__out_ecount (MAX_LONGPATH) register WCHAR *path, 
                  __in LPCWSTR drive, 
                  __in LPCWSTR dir, 
                  __in LPCWSTR fname, 
@@ -3197,8 +3207,16 @@ inline DWORD HashThreeToOne(DWORD a, DWORD b, DWORD c)
 {
     LIMITED_METHOD_DAC_CONTRACT;
 
-    // Current implementation taken from lookup3.c, by Bob Jenkins, May 2006
-    
+    /*
+    lookup3.c, by Bob Jenkins, May 2006, Public Domain.
+
+    These are functions for producing 32-bit hashes for hash table lookup.
+    hashword(), hashlittle(), hashlittle2(), hashbig(), mix(), and final() 
+    are externally useful functions.  Routines to test the hash are included 
+    if SELF_TEST is defined.  You can use this free for any purpose.  It's in
+    the public domain.  It has no warranty.
+    */
+
     #define rot32(x,k) (((x)<<(k)) | ((x)>>(32-(k))))
     c ^= b; c -= rot32(b,14);
     a ^= c; a -= rot32(c,11);
@@ -3350,15 +3368,6 @@ inline ULONG HashiStringNKnownLower80(LPCWSTR szStr, DWORD count) {
     }
     return hash;
 }
-
-// // //
-// // //  See $\src\utilcode\Debug.cpp for "Binomial (K, M, N)", which
-// // //  computes the binomial distribution, with which to compare your
-// // //  hash-table statistics.
-// // //
-
-
-
 
 //*****************************************************************************
 // IMPORTANT: This data structure is deprecated, please do not add any new uses.
@@ -4092,6 +4101,8 @@ public:
 // Class to parse a list of method names and then find a match
 //*****************************************************************************
 
+struct CORINFO_SIG_INFO;
+
 class MethodNamesListBase
 {
     struct MethodName
@@ -4103,6 +4114,8 @@ class MethodNamesListBase
     };
 
     MethodName     *pNames;         // List of names
+
+    bool IsInList(LPCUTF8 methodName, LPCUTF8 className, int numArgs);
 
 public:
     void Init()
@@ -4122,7 +4135,8 @@ public:
 
     void Insert(__in __in_z LPWSTR list);
 
-    bool IsInList(LPCUTF8 methodName, LPCUTF8 className, PCCOR_SIGNATURE sig);
+    bool IsInList(LPCUTF8 methodName, LPCUTF8 className, PCCOR_SIGNATURE sig = NULL);
+    bool IsInList(LPCUTF8 methodName, LPCUTF8 className, CORINFO_SIG_INFO* pSigInfo);
     bool IsEmpty()
     {
         LIMITED_METHOD_CONTRACT;
@@ -4237,7 +4251,8 @@ public:
         return m_list.IsEmpty();
     }
 
-    bool contains(LPCUTF8 methodName, LPCUTF8 className, PCCOR_SIGNATURE sig);
+    bool contains(LPCUTF8 methodName, LPCUTF8 className, PCCOR_SIGNATURE sig = NULL);
+    bool contains(LPCUTF8 methodName, LPCUTF8 className, CORINFO_SIG_INFO* pSigInfo);
 
     inline void ensureInit(const CLRConfig::ConfigStringInfo & info)
     {
@@ -4460,7 +4475,7 @@ HRESULT GetCurrentModuleFileName(__out_ecount(*pcchBuffer) LPWSTR pBuffer, __ino
 void GetDebuggerSettingInfo(SString &debuggerKeyValue, BOOL *pfAuto);
 HRESULT GetDebuggerSettingInfoWorker(__out_ecount_part_opt(*pcchDebuggerString, *pcchDebuggerString) LPWSTR wszDebuggerString, DWORD * pcchDebuggerString, BOOL * pfAuto);
 
-void TrimWhiteSpace(__deref_inout_ecount(*pcch)  LPCWSTR *pwsz, __inout LPDWORD pcch);
+void TrimWhiteSpace(__inout_ecount(*pcch)  LPCWSTR *pwsz, __inout LPDWORD pcch);
 
 
 //*****************************************************************************
@@ -5589,6 +5604,7 @@ namespace Clr { namespace Util
 namespace Reg
 {
     HRESULT ReadStringValue(HKEY hKey, LPCWSTR wszSubKey, LPCWSTR wszName, SString & ssValue);
+    __success(return == S_OK)
     HRESULT ReadStringValue(HKEY hKey, LPCWSTR wszSubKey, LPCWSTR wszName, __deref_out __deref_out_z LPWSTR* pwszValue);
 }
 
@@ -5614,6 +5630,7 @@ namespace Win32
         SString & ssFileName,
         bool fAllowLongFileNames = false);
 
+    __success(return == S_OK)
     HRESULT GetModuleFileName(
         HMODULE hModule,
         __deref_out_z LPWSTR * pwszFileName,

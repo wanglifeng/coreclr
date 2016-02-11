@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // regutil.cpp
 //
@@ -1130,8 +1129,8 @@ HRESULT REGUTIL::RegisterTypeLib(       // Return code.
     WCHAR       szID[64];               // The typelib ID to register.
     WCHAR       szTLBID[256];           // TypeLib\\szID.
     WCHAR       szHelpDir[_MAX_PATH];
-    WCHAR       szDrive[_MAX_DRIVE];
-    WCHAR       szDir[_MAX_DIR];
+    WCHAR       szDrive[_MAX_DRIVE] = {0};
+    WCHAR       szDir[_MAX_DIR] = {0};
     WCHAR       szVersion[64];
     LPWSTR      szTmp;
 

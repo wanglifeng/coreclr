@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -43,13 +42,13 @@ int __cdecl main(int argc, char *argv[]) {
         ERROR_SUCCESS (0L) is normally returned by GetLastError,
         But, the  ERROR_SUCCESS is removed from messages for Unix based Systems
         To ensure that we have some information into the buffer we are using the message
-        identifier value 10093L (WSANOTINITIALISED)
+        identifier value 2L (ERROR_FILE_NOT_FOUND)
     */
     ReturnResult = FormatMessage(
         FORMAT_MESSAGE_FROM_SYSTEM |
         FORMAT_MESSAGE_ALLOCATE_BUFFER,  /* source and processing options */
         NULL,                            /* message source */
-        10093L,                          /* message identifier */
+        2L,                              /* message identifier */
         0,                               /* language identifier */
         (LPWSTR)&OutBuffer,              /* message buffer */
         0,                               /* maximum size of message buffer */
@@ -65,7 +64,7 @@ int __cdecl main(int argc, char *argv[]) {
     if(wcslen(OutBuffer) <= 0) 
     {
         Fail("ERROR: There are no characters in the buffer, and when the "
-             "FORMAT_MESSAGE_FROM_SYSTEM flag is used with WSANOTINITIALISED error, "
+             "FORMAT_MESSAGE_FROM_SYSTEM flag is used with ERROR_FILE_NOT_FOUND error, "
              "something should be put into the buffer.");
     }
   

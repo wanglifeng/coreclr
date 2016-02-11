@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 /*=============================================================================
@@ -1059,7 +1060,7 @@ namespace System.Threading {
         // If the culture is safe (not customized or created in current app domain) 
         // then the FCALL will return a reference to that culture otherwise the 
         // FCALL will return failure. In case of failure we'll return the default culture.
-        // If the app domain owning a customized culture that is set to teh thread and this
+        // If the app domain owning a customized culture that is set to the thread and this
         // app domain get unloaded there is a code to clean up the culture from the thread
         // using the code in AppDomain::ReleaseDomainStores.
 
@@ -1175,7 +1176,7 @@ namespace System.Threading {
         // If the culture is safe (not customized or created in current app domain) 
         // then the FCALL will return a reference to that culture otherwise the 
         // FCALL will return failure. In case of failure we'll return the default culture.
-        // If the app domain owning a customized culture that is set to teh thread and this
+        // If the app domain owning a customized culture that is set to the thread and this
         // app domain get unloaded there is a code to clean up the culture from the thread
         // using the code in AppDomain::ReleaseDomainStores.
 
@@ -1450,6 +1451,7 @@ namespace System.Threading {
             set { SetAbortReason(value); }
         }
 
+#if !FEATURE_CORECLR
         /*
          *  This marks the beginning of a critical code region.
          */
@@ -1483,6 +1485,7 @@ namespace System.Threading {
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
         public static extern void EndThreadAffinity();
+#endif // !FEATURE_CORECLR
 
         /*=========================================================================
         ** Volatile Read & Write and MemoryBarrier methods.

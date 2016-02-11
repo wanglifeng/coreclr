@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 namespace  System.StubHelpers {
@@ -173,6 +174,11 @@ namespace  System.StubHelpers {
                     // If not provided, allocate the buffer using SysAllocStringByteLen so
                     // that odd-sized strings will be handled as well.
                     ptrToFirstChar = (byte *)Win32Native.SysAllocStringByteLen(null, lengthInBytes).ToPointer();
+
+                    if (ptrToFirstChar == null) 
+                    {
+                        throw new OutOfMemoryException();
+                    }
                 }
 
                 // copy characters from the managed string
@@ -1056,23 +1062,11 @@ namespace  System.StubHelpers {
 
                 if (IsIn(dwFlags))
                 {
-                    int length;
-
-                    byte[] bytes = AnsiCharMarshaler.DoAnsiConversion(
-                        pManagedHome.ToString(),
+                    int length = pManagedHome.ToString().ConvertToAnsi(
+                        ptr, allocSize,
                         IsBestFit(dwFlags),
-                        IsThrowOn(dwFlags),
-                        out length);
-
-                    Buffer.Memcpy(
-                        ptr,           // dst buffer
-                        0,             // dts index
-                        bytes,         // src array
-                        0,             // src index
-                        length);       // len
-
-                    // null-terminate the native string
-                    *(ptr + length) = 0;
+                        IsThrowOn(dwFlags));
+                    Contract.Assert(length < allocSize, "Expected a length less than the allocated size");
                 }
                 if (IsOut(dwFlags))
                 {

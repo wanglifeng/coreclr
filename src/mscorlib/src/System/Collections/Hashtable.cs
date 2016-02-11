@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -22,7 +23,7 @@ namespace System.Collections {
     using System.Runtime.CompilerServices;
     using System.Runtime.ConstrainedExecution;
     using System.Diagnostics.Contracts;
-#if FEATURE_RANDOMIZED_STRING_HASHING
+#if FEATURE_RANDOMIZED_STRING_HASHING && !FEATURE_PAL
     using System.Security.Cryptography;
 #endif
    
@@ -1802,9 +1803,11 @@ namespace System.Collections {
 
             return comparer;
         }
- 
+
         private const int bufferSize = 1024;
+#if !FEATURE_PAL
         private static RandomNumberGenerator rng;
+#endif
         private static byte[] data;
         private static int currentIndex = bufferSize;
         private static readonly object lockObj = new Object();
@@ -1816,14 +1819,21 @@ namespace System.Collections {
 
                 if(currentIndex == bufferSize) 
                 {
-                    if(null == rng)
+                    if(data == null)
                     {
-                        rng = RandomNumberGenerator.Create();
                         data = new byte[bufferSize];
                         Contract.Assert(bufferSize % 8 == 0, "We increment our current index by 8, so our buffer size must be a multiple of 8");
+#if !FEATURE_PAL
+                        rng = RandomNumberGenerator.Create();
+#endif
+
                     }
 
+#if FEATURE_PAL
+                    Microsoft.Win32.Win32Native.Random(true, data, data.Length);
+#else
                     rng.GetBytes(data);
+#endif
                     currentIndex = 0;
                 }
 

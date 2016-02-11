@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //----------------------------------------------------------------------------- 
 
 //----------------------------------------------------------------------------- 
@@ -617,13 +616,13 @@ DWORD_PTR dwAddr
         {
             if (mbi.Type & MEM_IMAGE)
             {
-                char achFile[MAX_PATH] = {0};
+                char achFile[MAX_LONGPATH] = {0};
                 DWORD cch;
                 
                 cch = GetModuleFileNameA(
                         (HINSTANCE)mbi.AllocationBase,
                         achFile,
-                        MAX_PATH);
+                        MAX_LONGPATH);
 
                 // Ignore the return code since we can't do anything with it.
                 _SymLoadModule(

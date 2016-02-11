@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // This class contains all the data & functionality for code generation
@@ -102,6 +101,10 @@ private:
     // branch to on compare condition being true.  'false' label corresponds to the target to
     // branch to on condition being false.
     static void genJumpKindsForTree(GenTreePtr cmpTree, emitJumpKind jmpKind[2], bool jmpToTrueLabel[2]);
+#if !defined(_TARGET_64BIT_)
+    static void genJumpKindsForTreeLongHi(GenTreePtr cmpTree, emitJumpKind jmpKind[2], bool jmpToTrueLabel[2]);
+    static void genJumpKindsForTreeLongLo(GenTreePtr cmpTree, emitJumpKind jmpKind[2], bool jmpToTrueLabel[2]);
+#endif //!defined(_TARGET_64BIT_)
 #endif // _TARGET_XARCH_
 
     static bool         genShouldRoundFP();
@@ -276,9 +279,9 @@ protected:
 
     //-------------------------------------------------------------------------
 
-    void                genJumpToThrowHlpBlk(emitJumpKind   jumpKind,
-                                             Compiler::addCodeKind    codeKind,
-                                             GenTreePtr     failBlk = NULL);
+    void                genJumpToThrowHlpBlk(emitJumpKind       jumpKind,
+                                             SpecialCodeKind    codeKind,
+                                             GenTreePtr         failBlk = NULL);
 
     void                genCheckOverflow    (GenTreePtr     tree);
 
@@ -301,6 +304,14 @@ protected:
     void                genCheckUseBlockInit();
 
 #if defined(_TARGET_ARM64_)
+    bool                genInstrWithConstant(instruction ins,  
+                                             emitAttr    attr, 
+                                             regNumber   reg1, 
+                                             regNumber   reg2,
+                                             ssize_t     imm, 
+                                             regNumber   tmpReg,
+                                             bool        inUnwindRegion = false);
+
     void                genStackPointerAdjustment(ssize_t   spAdjustment,
                                                   regNumber tmpReg,
                                                   bool*     pTmpRegIsZero);
@@ -398,13 +409,8 @@ protected:
 
     FuncletFrameInfoDsc genFuncletInfo;
 
-#elif defined(_TARGET_XARCH_) && !FEATURE_STACK_FP_X87
+#elif defined(_TARGET_AMD64_)
 
-    // Save/Restore callee saved float regs to stack
-    void                genPreserveCalleeSavedFltRegs(unsigned lclFrameSize);
-    void                genRestoreCalleeSavedFltRegs(unsigned lclFrameSize);
-
-#ifdef _TARGET_AMD64_
     // A set of information that is used by funclet prolog and epilog generation. It is collected once, before
     // funclet prologs and epilogs are generated, and used by all funclet prologs and epilogs, which must all be the same.
     struct FuncletFrameInfoDsc
@@ -415,7 +421,14 @@ protected:
     };
 
     FuncletFrameInfoDsc genFuncletInfo;
+
 #endif // _TARGET_AMD64_
+
+#if defined(_TARGET_XARCH_) && !FEATURE_STACK_FP_X87
+
+    // Save/Restore callee saved float regs to stack
+    void                genPreserveCalleeSavedFltRegs(unsigned lclFrameSize);
+    void                genRestoreCalleeSavedFltRegs(unsigned lclFrameSize);
 
 #endif // _TARGET_XARCH_ && FEATURE_STACK_FP_X87
 
@@ -750,7 +763,12 @@ protected :
             struct
             {
                 regNumberSmall  scRegNum;
-                regNumberSmall  scOtherReg; // used for "other half" of long var
+                
+                // Used for:
+                //  - "other half" of long var on architectures with 32 bit size registers - x86.
+                //  - for System V structs it stores the second register 
+                //    used to pass a register passed struct.
+                regNumberSmall  scOtherReg;
             } u1;
 
             struct
@@ -776,6 +794,7 @@ protected :
 
     void                psiEndPrologScope(psiScope *        scope);
 
+    void                psSetScopeOffset(psiScope* newScope, LclVarDsc * lclVarDsc1);
 
 /*****************************************************************************
  *                        TrnslLocalVarInfo

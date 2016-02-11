@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -667,7 +666,7 @@ void                Compiler::raSetupArgMasks(RegState *regState)
 #endif // LEGACY_BACKEND
 
 // The code to set the regState for each arg is outlined for shared use
-// by linear scan
+// by linear scan. (It is not shared for System V AMD64 platform.)
 regNumber     Compiler::raUpdateRegStateForArg(RegState *regState, LclVarDsc *argDsc)
 {
     regNumber inArgReg = argDsc->lvArgReg;
@@ -675,6 +674,20 @@ regNumber     Compiler::raUpdateRegStateForArg(RegState *regState, LclVarDsc *ar
     noway_assert(genRegMask(inArgReg) & (regState->rsIsFloat ? RBM_FLTARG_REGS : RBM_ARG_REGS));
 
     regState->rsCalleeRegArgMaskLiveIn |= genRegMask(inArgReg);
+
+#if FEATURE_MULTIREG_ARGS
+#ifdef _TARGET_ARM64_
+    if ((argDsc->lvOtherArgReg != REG_STK) && (argDsc->lvOtherArgReg != REG_NA))
+    {
+        regNumber secondArgReg = argDsc->lvOtherArgReg;
+
+        noway_assert(regState->rsIsFloat == false);
+        noway_assert(genRegMask(secondArgReg) & RBM_ARG_REGS);
+
+        regState->rsCalleeRegArgMaskLiveIn |= genRegMask(secondArgReg);
+    }
+#endif // TARGET_ARM64_
+#endif // FEATURE_MULTIREG_ARGS
 
 #ifdef _TARGET_ARM_
     if (argDsc->lvType == TYP_DOUBLE)
@@ -725,7 +738,8 @@ regNumber     Compiler::raUpdateRegStateForArg(RegState *regState, LclVarDsc *ar
             }
         }
     }
-#endif
+#endif // _TARGET_ARM_
+
     return inArgReg;
 }
 
@@ -1930,49 +1944,49 @@ PREDICT_REG_COMMON:
             else if (rpHasVarIndexForPredict(predictReg))
             {
                 /* Get the tracked local variable that has an lvVarIndex of tgtIndex1 */
-
-                unsigned tgtIndex1 = rpGetVarIndexForPredict(predictReg);
-                LclVarDsc * tgtVar   = lvaTable + lvaTrackedToVarNum[tgtIndex1];
-                VarSetOps::MakeSingleton(this, tgtIndex1);
-
-                noway_assert(tgtVar->lvVarIndex == tgtIndex1);
-                noway_assert(tgtVar->lvRegNum   != REG_STK);  /* Must have been enregistered */
-#ifndef _TARGET_AMD64_
-                // On amd64 we have the occasional spec-allowed implicit conversion from TYP_I_IMPL to TYP_INT
-                // so this assert is meaningless
-                noway_assert((type != TYP_LONG) || (tgtVar->TypeGet() == TYP_LONG));
-#endif // !_TARGET_AMD64_
-
-                if (varDsc->lvTracked)
                 {
-                    unsigned    srcIndex; srcIndex = varDsc->lvVarIndex;
+                    unsigned tgtIndex1 = rpGetVarIndexForPredict(predictReg);
+                    LclVarDsc * tgtVar   = lvaTable + lvaTrackedToVarNum[tgtIndex1];
+                    VarSetOps::MakeSingleton(this, tgtIndex1);
 
-                    // If this register has it's last use here then we will prefer
-                    // to color to the same register as tgtVar.
-                    if (lastUse)
+                    noway_assert(tgtVar->lvVarIndex == tgtIndex1);
+                    noway_assert(tgtVar->lvRegNum   != REG_STK);  /* Must have been enregistered */
+#ifndef _TARGET_AMD64_
+                    // On amd64 we have the occasional spec-allowed implicit conversion from TYP_I_IMPL to TYP_INT
+                    // so this assert is meaningless
+                    noway_assert((type != TYP_LONG) || (tgtVar->TypeGet() == TYP_LONG));
+#endif // !_TARGET_AMD64_
+    
+                    if (varDsc->lvTracked)
                     {
-                        /*
-                         *  Add an entry in the lvaVarPref graph to indicate
-                         *  that it would be worthwhile to color these two variables
-                         *  into the same physical register.
-                         *  This will help us avoid having an extra copy instruction
-                         */
-                        VarSetOps::AddElemD(this, lvaVarPref[srcIndex], tgtIndex1);
-                        VarSetOps::AddElemD(this, lvaVarPref[tgtIndex1], srcIndex);
+                        unsigned    srcIndex; srcIndex = varDsc->lvVarIndex;
+    
+                        // If this register has it's last use here then we will prefer
+                        // to color to the same register as tgtVar.
+                        if (lastUse)
+                        {
+                            /*
+                             *  Add an entry in the lvaVarPref graph to indicate
+                             *  that it would be worthwhile to color these two variables
+                             *  into the same physical register.
+                             *  This will help us avoid having an extra copy instruction
+                             */
+                            VarSetOps::AddElemD(this, lvaVarPref[srcIndex], tgtIndex1);
+                            VarSetOps::AddElemD(this, lvaVarPref[tgtIndex1], srcIndex);
+                        }
+    
+                        // Add a variable interference from srcIndex to each of the last use variables
+                        if (!VarSetOps::IsEmpty(this, rpLastUseVars))
+                        {
+                            rpRecordVarIntf(srcIndex, rpLastUseVars
+                                            DEBUGARG( "src reg conflict"));
+                        }
                     }
-
-                    // Add a variable interference from srcIndex to each of the last use variables
-                    if (!VarSetOps::IsEmpty(this, rpLastUseVars))
-                    {
-                        rpRecordVarIntf(srcIndex, rpLastUseVars
-                                        DEBUGARG( "src reg conflict"));
-                    }
-                }
-                rpAsgVarNum = tgtIndex1;
-
-                /* We will rely on the target enregistered variable from the GT_ASG */
-                varDsc = tgtVar;
-
+                    rpAsgVarNum = tgtIndex1;
+    
+                    /* We will rely on the target enregistered variable from the GT_ASG */
+                    varDsc = tgtVar;
+                }               
 GRAB_COUNT:
                 unsigned grabCount;  grabCount = 0;
 
@@ -2834,16 +2848,7 @@ ASG_COMMON:
             /* Casting from integral type to floating type is special */
             if (!varTypeIsFloating(type) && varTypeIsFloating(op1->TypeGet()))
             {
-                // If dblwasInt
-                if (!opts.compCanUseSSE2)
-                {
-                    // if SSE2 is not enabled this can only be a DblWasInt case
-                    assert(gtDblWasInt(op1));
-                    regMask = rpPredictRegPick(type, PREDICT_SCRATCH_REG, lockedRegs);
-                    tree->gtUsedRegs = (regMaskSmall)regMask;
-                    goto RETURN_CHECK;
-                }
-                else
+                if (opts.compCanUseSSE2)
                 {
                     // predict for SSE2 based casting
                     if (predictReg <= PREDICT_REG)
@@ -2884,12 +2889,10 @@ ASG_COMMON:
             /* otherwise must load op1 into a register */
             goto GENERIC_UNARY;
 
-#if INLINE_MATH
-
-        case GT_MATH:
+        case GT_INTRINSIC:
 
 #ifdef _TARGET_XARCH_
-            if (tree->gtMath.gtMathFN==CORINFO_INTRINSIC_Round &&
+            if (tree->gtIntrinsic.gtIntrinsicId==CORINFO_INTRINSIC_Round &&
                     tree->TypeGet()==TYP_INT)
             {
                 // This is a special case to handle the following
@@ -2908,7 +2911,6 @@ ASG_COMMON:
             }
 #endif
             __fallthrough;
-#endif
 
         case GT_NEG:
 #ifdef _TARGET_ARM_
@@ -5405,6 +5407,16 @@ regMaskTP Compiler::rpPredictAssignRegVars(regMaskTP regAvail)
     for (unsigned sortNum = 0; sortNum < lvaCount; sortNum++)
     {
         bool notWorthy = false;
+        
+        unsigned varIndex;
+        bool isDouble;
+        regMaskTP regAvailForType;
+        var_types regType;
+        regMaskTP  avoidReg;
+        unsigned   customVarOrderSize;
+        regNumber  customVarOrder[MAX_VAR_ORDER_SIZE];
+        bool      firstHalf;
+        regNumber saveOtherReg;
 
         varDsc   = lvaRefSorted[sortNum];
 
@@ -5430,7 +5442,7 @@ regMaskTP Compiler::rpPredictAssignRegVars(regMaskTP regAvail)
             goto CANT_REG;
         
         /* Get hold of the index and the interference mask for the variable */
-        unsigned varIndex = varDsc->lvVarIndex;
+        varIndex = varDsc->lvVarIndex;
 
         // Remove 'varIndex' from unprocessedVars
         VarSetOps::RemoveElemD(this, unprocessedVars, varIndex);
@@ -5479,9 +5491,6 @@ regMaskTP Compiler::rpPredictAssignRegVars(regMaskTP regAvail)
 
 OK_TO_ENREGISTER:
 
-        regMaskTP regAvailForType;
-        var_types regType;
-
         if (varTypeIsFloating(varDsc->TypeGet()))
         {
             regType = varDsc->TypeGet();
@@ -5494,7 +5503,7 @@ OK_TO_ENREGISTER:
         }
 
 #ifdef _TARGET_ARM_
-        bool isDouble = (varDsc->TypeGet() == TYP_DOUBLE);
+        isDouble = (varDsc->TypeGet() == TYP_DOUBLE);
 
         if (isDouble)
         {
@@ -5516,7 +5525,6 @@ OK_TO_ENREGISTER:
         }
 
         // Set of registers to avoid when performing register allocation
-        regMaskTP  avoidReg;
         avoidReg = RBM_NONE;
 
         if (!varDsc->lvIsRegArg)
@@ -5568,13 +5576,12 @@ OK_TO_ENREGISTER:
         // Now we will try to predict which register the variable
         // could  be enregistered in
 
-        unsigned   customVarOrderSize;  customVarOrderSize = MAX_VAR_ORDER_SIZE;
-        regNumber  customVarOrder[MAX_VAR_ORDER_SIZE];
+        customVarOrderSize = MAX_VAR_ORDER_SIZE;
 
         raSetRegVarOrder(regType, customVarOrder, &customVarOrderSize, varDsc->lvPrefReg, avoidReg);
 
-        bool      firstHalf;       firstHalf    = false;
-        regNumber saveOtherReg;    saveOtherReg = DUMMY_INIT(REG_NA);
+        firstHalf    = false;
+        saveOtherReg = DUMMY_INIT(REG_NA);
 
         for (regInx = 0;
              regInx < customVarOrderSize;
@@ -5641,7 +5648,7 @@ OK_TO_ENREGISTER:
                 // otherwise we will spill this callee saved registers,
                 // because its uses when combined with the uses of 
                 // other yet to be processed candidates exceed our threshold.
-                totalRefCntWtd = totalRefCntWtd;
+                // totalRefCntWtd = totalRefCntWtd;
             }
 
 
@@ -6431,6 +6438,9 @@ void               Compiler::rpPredictRegUse()
         // it must not be in a register trashed by the callee
         if (info.compCallUnmanaged != 0)
         {
+            assert(!opts.ShouldUsePInvokeHelpers());
+            noway_assert(info.compLvFrameListRoot < lvaCount);
+
             LclVarDsc *     pinvokeVarDsc = &lvaTable[info.compLvFrameListRoot];
 
             if (pinvokeVarDsc->lvTracked)

@@ -2,6 +2,9 @@ syntax: glob
 
 [Bb]inaries/
 
+# Build tools related files
+[Tt]ools/
+
 ### VisualStudio ###
 
 # User-specific files
@@ -141,6 +144,7 @@ publish/
 # NuGet Packages
 *.nupkg
 **/packages/*
+project.lock.json
 
 # Windows Azure Build Output
 csx/
@@ -164,6 +168,7 @@ node_modules/
 *.metaproj.tmp
 .atom-build.json
 tags
+TAGS
 
 # RIA/Silverlight projects
 Generated_Code/
@@ -222,6 +227,7 @@ $RECYCLE.BIN/
 ### Linux ###
 
 *~
+\#*\#
 
 # KDE directory preferences
 .directory
@@ -257,6 +263,7 @@ Temporary Items
 
 # Ignore folders created by the test build
 TestWrappers_x64_debug
+TestWrappers_x64_checked
 TestWrappers_x64_release
 
 Vagrantfile
@@ -266,3 +273,10 @@ Vagrantfile
 CMakeFiles/
 cmake_install.cmake
 CMakeCache.txt
+Makefile
+
+# Cross compilation
+cross/rootfs/*
+
+#python import files
+*.pyc

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -155,6 +154,9 @@ CodeGen::CodeGen(Compiler * theCompiler) :
 #ifdef _TARGET_AMD64_
     // This will be set before final frame layout.
     compiler->compVSQuirkStackPaddingNeeded = 0;
+
+    // Set to true if we perform the Quirk that fixes the PPP issue
+    compiler->compQuirkForPPPflag = false;
 #endif // _TARGET_AMD64_
 
 #ifdef LEGACY_BACKEND
@@ -183,11 +185,13 @@ void CodeGenInterface::genMarkTreeInReg(GenTreePtr tree, regNumber reg)
     tree->gtFlags  |= GTF_REG_VAL;
 }
 
+#if CPU_LONG_USES_REGPAIR
 void CodeGenInterface::genMarkTreeInRegPair(GenTreePtr tree, regPairNo regPair)
 {
     tree->gtRegPair = regPair;
     tree->gtFlags  |= GTF_REG_VAL;
 }
+#endif
 
 
 #if defined(_TARGET_X86_) || defined(_TARGET_ARM_)
@@ -715,12 +719,12 @@ void                CodeGenInterface::genUpdateRegLife(const LclVarDsc * varDsc,
         // We'd like to be able to assert the following, however if we are walking
         // through a qmark/colon tree, we may encounter multiple last-use nodes.
         // assert((regSet.rsMaskVars & regMask) == regMask);
-        regSet.rsMaskVars &= ~(regMask);
+        regSet.RemoveMaskVars(regMask);
     }
     else
     {
         assert((regSet.rsMaskVars & regMask) == 0);
-        regSet.rsMaskVars |= regMask;
+        regSet.AddMaskVars(regMask);
     }
 }
 
@@ -803,6 +807,10 @@ regMaskTP Compiler::compNoGCHelperCallKillSet(CorInfoHelpFunc helper)
     case CORINFO_HELP_PROF_FCN_LEAVE:
     case CORINFO_HELP_PROF_FCN_TAILCALL:
         return RBM_PROFILER_LEAVE_TRASH;
+
+    case CORINFO_HELP_ASSIGN_BYREF:
+        // this helper doesn't trash RSI and RDI
+        return RBM_CALLEE_TRASH_NOGC & ~(RBM_RSI | RBM_RDI);
 
     default:
         return RBM_CALLEE_TRASH_NOGC;
@@ -1485,12 +1493,145 @@ regNumber           CodeGenInterface::genGetThisArgReg(GenTreePtr  call)
 }
 
 #ifdef _TARGET_XARCH_
-// return true if this relocatable address should use IP-rel
-bool CodeGenInterface::genAddrShouldUsePCRel(size_t addr)
+
+#ifdef _TARGET_AMD64_
+// Returns relocation type hint for an addr.
+// Note that there are no reloc hints on x86.
+//
+// Arguments
+//    addr  -  data address
+//
+// Returns
+//    relocation type hint
+//
+unsigned short CodeGenInterface::genAddrRelocTypeHint(size_t addr)
 {
-    return compiler->info.compCompHnd->getRelocTypeHint((void *)addr) == IMAGE_REL_BASED_REL32;
+    return compiler->eeGetRelocTypeHint((void *)addr);
 }
+#endif //_TARGET_AMD64_
+
+// Return true if an absolute indirect data address can be encoded as IP-relative.
+// offset. Note that this method should be used only when the caller knows that
+// the address is an icon value that VM has given and there is no GenTree node
+// representing it. Otherwise, one should always use FitsInAddrBase().
+//
+// Arguments
+//    addr  -  an absolute indirect data address
+//
+// Returns
+//    true if indir data addr could be encoded as IP-relative offset.
+//
+bool CodeGenInterface::genDataIndirAddrCanBeEncodedAsPCRelOffset(size_t addr)
+{
+#ifdef _TARGET_AMD64_
+    return genAddrRelocTypeHint(addr) == IMAGE_REL_BASED_REL32;
+#else 
+    // x86: PC-relative addressing is available only for control flow instructions (jmp and call)
+    return false;
 #endif
+}
+
+// Return true if an indirect code address can be encoded as IP-relative offset.
+// Note that this method should be used only when the caller knows that the
+// address is an icon value that VM has given and there is no GenTree node
+// representing it. Otherwise, one should always use FitsInAddrBase().
+//
+// Arguments
+//    addr  -  an absolute indirect code address
+//
+// Returns
+//    true if indir code addr could be encoded as IP-relative offset.
+//
+bool CodeGenInterface::genCodeIndirAddrCanBeEncodedAsPCRelOffset(size_t addr)
+{
+#ifdef _TARGET_AMD64_
+    return genAddrRelocTypeHint(addr) == IMAGE_REL_BASED_REL32;
+#else 
+    // x86: PC-relative addressing is available only for control flow instructions (jmp and call)
+    return true;
+#endif
+}
+
+// Return true if an indirect code address can be encoded as 32-bit displacement
+// relative to zero. Note that this method should be used only when the caller
+// knows that the address is an icon value that VM has given and there is no
+// GenTree node representing it. Otherwise, one should always use FitsInAddrBase().
+//
+// Arguments
+//    addr  -  absolute indirect code address
+//
+// Returns
+//    true if absolute indir code addr could be encoded as 32-bit displacement relative to zero.
+//
+bool CodeGenInterface::genCodeIndirAddrCanBeEncodedAsZeroRelOffset(size_t addr)
+{
+    return GenTreeIntConCommon::FitsInI32((ssize_t)addr);
+}
+
+// Return true if an absolute indirect code address needs a relocation recorded with VM.
+//
+// Arguments
+//    addr  -  an absolute indirect code address
+//
+// Returns
+//    true if indir code addr needs a relocation recorded with VM
+//
+bool CodeGenInterface::genCodeIndirAddrNeedsReloc(size_t addr)
+{
+    // If generating relocatable ngen code, then all code addr should go through relocation
+    if (compiler->opts.compReloc)
+    {
+        return true;
+    }
+
+    // Else jitting.
+
+#ifdef _TARGET_AMD64_
+    // If code addr could be encoded as 32-bit offset relative to IP, we need to record a relocation.    
+    if (genCodeIndirAddrCanBeEncodedAsPCRelOffset(addr))
+    {
+        return true;
+    }
+
+    // It could be possible that the code indir addr could be encoded as 32-bit displacement relative
+    // to zero.  But we don't need to emit a relocation in that case.
+    return false;
+#else //_TARGET_X86_
+    // On x86 there is need for recording relocations during jitting, 
+    // because all addrs fit within 32-bits.
+    return false;
+#endif //_TARGET_X86_
+}
+
+// Return true if a direct code address needs to be marked as relocatable.
+//
+// Arguments
+//    addr  -  absolute direct code address
+//
+// Returns
+//    true if direct code addr needs a relocation recorded with VM
+//
+bool CodeGenInterface::genCodeAddrNeedsReloc(size_t addr)
+{
+    // If generating relocatable ngen code, then all code addr should go through relocation
+    if (compiler->opts.compReloc)
+    {
+        return true;
+    }
+
+    // Else jitting.
+
+#ifdef _TARGET_AMD64_
+    // By default all direct code addresses go through relocation so that VM will setup
+    // a jump stub if addr cannot be encoded as pc-relative offset.
+    return true;
+#else //_TARGET_X86_
+    // On x86 there is no need for recording relocations during jitting, 
+    // because all addrs fit within 32-bits.
+    return false;
+#endif //_TARGET_X86_
+}
+#endif //_TARGET_XARCH_
 
 
 /*****************************************************************************
@@ -2424,7 +2565,7 @@ void                CodeGen::genExitCode(BasicBlock * block)
  */
 
 void            CodeGen::genJumpToThrowHlpBlk(emitJumpKind          jumpKind,
-                                              Compiler::addCodeKind codeKind,
+                                              SpecialCodeKind       codeKind,
                                               GenTreePtr            failBlk)
 {
     if (!compiler->opts.compDbgCode)
@@ -2521,7 +2662,7 @@ void            CodeGen::genCheckOverflow(GenTreePtr tree)
 
     // Jump to the block which will throw the expection
 
-    genJumpToThrowHlpBlk(jumpKind, Compiler::ACK_OVERFLOW);
+    genJumpToThrowHlpBlk(jumpKind, SCK_OVERFLOW);
 }
 
 #if FEATURE_EH_FUNCLETS
@@ -3648,7 +3789,7 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                                                    RegState *regState)
 {
 #ifdef DEBUG
-    if (verbose)
+    if (verbose) 
         printf("*************** In genFnPrologCalleeRegArgs() for %s regs\n", regState->rsIsFloat ? "float" : "int");
 #endif
 
@@ -3678,6 +3819,9 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
     struct
     {
         unsigned    varNum;     // index into compiler->lvaTable[] for this register argument
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+        var_types   type;       // the Jit type of this regArgTab entry
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
         unsigned    trashBy;    // index into this regArgTab[] table of the register that will be copied to this register.
                                 // That is, for regArgTab[x].trashBy = y, argument register number 'y' will be copied to
                                 // argument register number 'x'. Only used when circular = true.
@@ -3686,23 +3830,39 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                                 // 2 means the second part of a register argument (e.g., for a TYP_DOUBLE on ARM)
         bool        stackArg;   // true if the argument gets homed to the stack
         bool        processed;  // true after we've processed the argument (and it is in its final location)
-        bool        circular;   // true if this register participates in a circular dependency loop
+        bool        circular;   // true if this register participates in a circular dependency loop.
+
+        // For UNIX AMD64 struct passing, the type of the register argument slot can differ from
+        // the type of the lclVar in ways that are not ascertainable from lvType.
+        // So, for that case we retain the type of the register in the regArgTab.
+        // In other cases, we simply use the type of the lclVar to determine the type of the register.
+
+        var_types   getRegType(Compiler* compiler)
+        {
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+            return type;
+#else // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+            return compiler->lvaTable[varNum].lvType;
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)            
+        }
     } regArgTab [max(MAX_REG_ARG,MAX_FLOAT_REG_ARG)] = { };
 
     unsigned    varNum;
     LclVarDsc * varDsc;
-
     for (varNum = 0, varDsc = compiler->lvaTable;
          varNum < compiler->lvaCount;
-         varNum++  , varDsc++)
+         varNum++, varDsc++)
     {
         /* Is this variable a register arg? */
-
-        if  (!varDsc->lvIsParam)
+        if (!varDsc->lvIsParam)
+        {
             continue;
+        }
 
-        if  (!varDsc->lvIsRegArg)
+        if (!varDsc->lvIsRegArg)
+        {
             continue;
+        }
 
         // When we have a promoted struct we have two possible LclVars that can represent the incoming argument
         // in the regArgTab[], either the original TYP_STRUCT argument or the introduced lvStructField.
@@ -3726,13 +3886,17 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
                 // For register arguments that are independent promoted structs we put the promoted field varNum in the regArgTab[]
                 if (varDsc->lvPromoted)
+                {
                     continue;
+                }
             }
             else
             {
                 // For register arguments that are not independent promoted structs we put the parent struct varNum in the regArgTab[]
                 if (varDsc->lvIsStructField)
+                {
                     continue;
+                }
             }
         }
 
@@ -3743,19 +3907,112 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
         var_types regType = varDsc->TypeGet();
 #endif // !_TARGET_ARM_
 
-        if (isFloatRegType(regType) != doingFloat)
-            continue;
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+        if (!varTypeIsStruct(regType))
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+        {
+            // A struct might be passed  partially in XMM register for System V calls.
+            // So a single arg might use both register files.
+            if (isFloatRegType(regType) != doingFloat)
+            {
+                continue;
+            }
+        }
 
-        /* Bingo - add it to our table */
-        
-        regArgNum = genMapRegNumToRegArgNum(varDsc->lvArgReg, regType);
-        noway_assert(regArgNum < regState->rsCalleeRegArgNum);
-        noway_assert(regArgTab[regArgNum].slot == 0); // we better not have added it already (there better not be multiple vars representing this argument register)
+        int slots = 0;
 
-        regArgTab[regArgNum].varNum = varNum;
-        regArgTab[regArgNum].slot = 1;
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+        if (varTypeIsStruct(varDsc))
+        {
+            CORINFO_CLASS_HANDLE typeHnd = varDsc->lvVerTypeInfo.GetClassHandle();
+            assert(typeHnd != nullptr);
+            SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR structDesc;
+            compiler->eeGetSystemVAmd64PassStructInRegisterDescriptor(typeHnd, &structDesc);
+            if (!structDesc.passedInRegisters)
+            {
+                // The var is not passed in registers.
+                continue;
+            }
 
-        int slots = 1;
+            unsigned firstRegSlot = 0;
+            for (unsigned slotCounter = 0; slotCounter < structDesc.eightByteCount; slotCounter++)
+            {
+                regNumber regNum = varDsc->lvRegNumForSlot(slotCounter);
+
+                var_types regType = compiler->getEightByteType(structDesc, slotCounter);
+                
+                regArgNum = genMapRegNumToRegArgNum(regNum, regType);
+                
+                if ((!doingFloat && (structDesc.IsIntegralSlot(slotCounter))) ||
+                     (doingFloat && (structDesc.IsSseSlot(slotCounter))))
+                {
+                    // Store the reg for the first slot.
+                    if (slots == 0)
+                    {
+                        firstRegSlot = regArgNum;
+                    }
+
+                    // Bingo - add it to our table
+                    noway_assert(regArgNum < regState->rsCalleeRegArgNum);
+                    noway_assert(regArgTab[regArgNum].slot == 0); // we better not have added it already (there better not be multiple vars representing this argument register)
+                    regArgTab[regArgNum].varNum = varNum;
+                    regArgTab[regArgNum].slot = (char)(slotCounter + 1);
+                    regArgTab[regArgNum].type = regType;
+                    slots++;
+                }
+            }
+
+            if (slots == 0)
+            {
+                continue; // Nothing to do for this regState set.
+            }
+
+            regArgNum = firstRegSlot;
+        }
+        else
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+        {
+            // Bingo - add it to our table
+            regArgNum = genMapRegNumToRegArgNum(varDsc->lvArgReg, regType);
+            noway_assert(regArgNum < regState->rsCalleeRegArgNum);
+            // we better not have added it already (there better not be multiple vars representing this argument register)
+            noway_assert(regArgTab[regArgNum].slot == 0);
+
+            // Set the register type.
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+            regArgTab[regArgNum].type = regType;
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+
+            regArgTab[regArgNum].varNum = varNum;
+            regArgTab[regArgNum].slot = 1;
+
+            slots = 1;
+
+#if FEATURE_MULTIREG_ARGS
+#ifdef _TARGET_ARM64_
+            if (varDsc->TypeGet() == TYP_STRUCT)
+            {
+                if (varDsc->lvExactSize > REGSIZE_BYTES)
+                {
+                    assert(varDsc->lvExactSize <= 2*REGSIZE_BYTES);
+
+                    // Note that regArgNum+1 represents an argument index not an actual argument register.  
+                    // see genMapRegArgNumToRegNum(unsigned argNum, var_types type)
+
+                    // This is the setup for the second half of a MULTIREG struct arg
+                    noway_assert(regArgNum+1 < regState->rsCalleeRegArgNum);
+                    // we better not have added it already (there better not be multiple vars representing this argument register)
+                    noway_assert(regArgTab[regArgNum+1].slot == 0);
+                    
+                    regArgTab[regArgNum+1].varNum = varNum;
+                    regArgTab[regArgNum+1].slot = 2;
+
+                    slots++;
+                }
+            }
+#endif // _TARGET_ARM64_
+#endif // FEATURE_MULTIREG_ARGS
+        }
 
 #ifdef _TARGET_ARM_
         int lclSize = compiler->lvaLclSize(varNum);
@@ -3778,9 +4035,16 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
         for (int i = 0; i < slots; i ++)
         {
+            regType = regArgTab[regArgNum + i].getRegType(compiler);
             regNumber regNum = genMapRegArgNumToRegNum(regArgNum + i, regType);
-            assert((i > 0) || (regNum == varDsc->lvArgReg));
 
+            // lvArgReg could be INT or FLOAT reg. So the following assertion doesn't hold.
+            // The type of the register depends on the classification of the first eightbyte 
+            // of the struct. For information on classification refer to the System V x86_64 ABI at:
+            // http://www.x86-64.org/documentation/abi.pdf
+#if !defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+            assert((i > 0) || (regNum == varDsc->lvArgReg));
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
             // Is the arg dead on entry to the method ?
 
             if ((regArgMaskLive & genRegMask(regNum)) == 0)
@@ -3831,8 +4095,8 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
             /* If it goes on the stack or in a register that doesn't hold
              * an argument anymore -> CANNOT form a circular dependency */
 
-            if ( varDsc->lvIsInReg()                              &&
-                (genRegMask(regNum) & regArgMaskLive)   )
+            if (varDsc->lvIsInReg() &&
+                (genRegMask(regNum) & regArgMaskLive))
             {
                 /* will trash another argument -> possible dependency
                  * We may need several passes after the table is constructed
@@ -3841,22 +4105,33 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                 /* Maybe the argument stays in the register (IDEAL) */
 
                 if ((i == 0) && (varDsc->lvRegNum == regNum))
+                {
                     goto NON_DEP;
+                }
 
-                if ((i == 1) && (genActualType(varDsc->TypeGet()) == TYP_LONG) &&
-                                (varDsc->lvOtherReg == regNum))
+#if !defined(_TARGET_64BIT_)
+                if ((i == 1) && varTypeIsStruct(varDsc) &&
+                    (varDsc->lvOtherReg == regNum))
+                {
                     goto NON_DEP;
+                }
+                if ((i == 1) && (genActualType(varDsc->TypeGet()) == TYP_LONG) &&
+                    (varDsc->lvOtherReg == regNum))
+                {
+                    goto NON_DEP;
+                }
 
                 if ((i == 1) && (genActualType(varDsc->TypeGet()) == TYP_DOUBLE) &&
-                                (REG_NEXT(varDsc->lvRegNum) == regNum))
+                    (REG_NEXT(varDsc->lvRegNum) == regNum))
+                {
                     goto NON_DEP;
-
+                }
+#endif // !defined(_TARGET_64BIT_)
                 regArgTab[regArgNum+i].circular  = true;
             }
             else
             {
             NON_DEP:
-
                 regArgTab[regArgNum+i].circular  = false;
                 
                 /* mark the argument register as free */
@@ -3870,7 +4145,6 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
      * such that R1->R2 (that is, R1 needs to be moved to R2), R2->R3, ..., Rn->R1 */
 
     bool    change = true;
-
     if (regArgMaskLive)
     {
         /* Possible circular dependencies still exist; the previous pass was not enough
@@ -3882,15 +4156,20 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
             for (argNum = 0; argNum < regState->rsCalleeRegArgNum; argNum++)
             {
-                /* If we already marked the argument as non-circular then continue */
+                // If we already marked the argument as non-circular then continue
 
                 if (!regArgTab[argNum].circular)
+                {
                     continue;
+                }
 
                 if (regArgTab[argNum].slot == 0) // Not a register argument
+                {
                     continue;
+                }
 
-                varNum = regArgTab[argNum].varNum; noway_assert(varNum < compiler->lvaCount);
+                varNum = regArgTab[argNum].varNum;
+                noway_assert(varNum < compiler->lvaCount);
                 varDsc = compiler->lvaTable + varNum;
                 noway_assert(varDsc->lvIsParam && varDsc->lvIsRegArg);
 
@@ -3898,12 +4177,28 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                 noway_assert(varDsc->lvIsInReg());
                 noway_assert(!regArgTab[argNum].stackArg);
 
-                regNumber regNum = genMapRegArgNumToRegNum(argNum, varDsc->TypeGet());
-                regNumber destRegNum;
+                var_types regType = regArgTab[argNum].getRegType(compiler);
+                regNumber regNum = genMapRegArgNumToRegNum(argNum, regType);
+
+                regNumber destRegNum = REG_NA;
                 if (regArgTab[argNum].slot == 1)
                 {
                     destRegNum = varDsc->lvRegNum;
                 }
+#if FEATURE_MULTIREG_ARGS && defined(FEATURE_SIMD) && defined(_TARGET_AMD64_)
+                else
+                {
+                    assert(regArgTab[argNum].slot == 2);
+                    assert(argNum > 0);
+                    assert(regArgTab[argNum - 1].slot == 1);
+                    assert(regArgTab[argNum - 1].varNum == varNum);
+                    assert((varDsc->lvType == TYP_SIMD12) || (varDsc->lvType == TYP_SIMD16));
+                    regArgMaskLive &= ~genRegMask(regNum);
+                    regArgTab[argNum].circular = false;
+                    change = true;
+                    continue;
+                }
+#elif !defined(_TARGET_64BIT_)
                 else if (regArgTab[argNum].slot == 2 &&
                          genActualType(varDsc->TypeGet()) == TYP_LONG)
                 {
@@ -3915,11 +4210,12 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                     assert(varDsc->TypeGet() == TYP_DOUBLE);
                     destRegNum = REG_NEXT(varDsc->lvRegNum);
                 }
-
+#endif // !defined(_TARGET_64BIT_)
+                noway_assert(destRegNum != REG_NA);
                 if (genRegMask(destRegNum) & regArgMaskLive)
                 {
                     /* we are trashing a live argument register - record it */
-                    unsigned destRegArgNum = genMapRegNumToRegArgNum(destRegNum, varDsc->TypeGet());
+                    unsigned destRegArgNum = genMapRegNumToRegArgNum(destRegNum, regType);
                     noway_assert(destRegArgNum < regState->rsCalleeRegArgNum);
                     regArgTab[destRegArgNum].trashBy  = argNum;
                 }
@@ -3949,33 +4245,47 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
     }
 #endif
 
-    // TODO-AMD64-Bug? - homing of float argument registers with circular dependencies.
-#ifdef _TARGET_AMD64_
-    NYI_IF((regArgMaskLive & RBM_FLTARG_REGS) != 0, "Homing of float argument registers with circular dependencies not implemented");        
-#endif // _TARGET_AMD64_
+    // LSRA allocates registers to incoming parameters in order and will not overwrite
+    // a register still holding a live parameter.
+#ifndef LEGACY_BACKEND
+    noway_assert(((regArgMaskLive & RBM_FLTARG_REGS) == 0) && "Homing of float argument registers with circular dependencies not implemented.");
+#endif // LEGACY_BACKEND
 
     /* Now move the arguments to their locations.
      * First consider ones that go on the stack since they may
      * free some registers. */
 
     regArgMaskLive = regState->rsCalleeRegArgMaskLiveIn; // reset the live in to what it was at the start
-
     for (argNum = 0; argNum < regState->rsCalleeRegArgNum; argNum++)
     {
         emitAttr        size;
 
-        /* If the arg is dead on entry to the method, skip it */
+        // If this is the wrong register file, just continue.
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+        if (regArgTab[argNum].type == TYP_UNDEF)
+        {
+            // This could happen if the reg in regArgTab[argNum] is of the other register file -
+            //     for System V register passed structs where the first reg is GPR and the second an XMM reg.
+            // The next register file processing will process it.
+            continue;
+        }
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+        // If the arg is dead on entry to the method, skip it
 
         if (regArgTab[argNum].processed)
+        {
             continue;
+        }
 
         if (regArgTab[argNum].slot == 0) // Not a register argument
+        {
             continue;
+        }
 
         varNum = regArgTab[argNum].varNum; noway_assert(varNum < compiler->lvaCount);
         varDsc = compiler->lvaTable + varNum;
 
-        /* If not a stack arg go to the next one */
+        // If not a stack arg go to the next one
 
 #ifndef _TARGET_64BIT_
         if (varDsc->lvType == TYP_LONG)
@@ -3993,7 +4303,9 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 #endif // !_TARGET_64BIT_
         {
             if (!regArgTab[argNum].stackArg)
+            {
                 continue;
+            }
         }
 
 #if defined(_TARGET_ARM_)
@@ -4017,24 +4329,25 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
         var_types storeType = TYP_UNDEF;
 
 #if defined(_TARGET_AMD64_) || defined(_TARGET_ARM64_)
-        if (varDsc->TypeGet() == TYP_STRUCT)
+        if (varTypeIsStruct(varDsc))
         {
             size = EA_SIZE(varDsc->lvSize());
 #if defined(_TARGET_AMD64_)
-            storeType = (var_types) ((size <= 4) ? TYP_INT : TYP_I_IMPL);
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+            storeType = regArgTab[argNum].type;
+            size = emitActualTypeSize(storeType);
+#else // !FEATURE_UNIX_AMD64_STRUCT_PASSING
+            storeType = (var_types)((size <= 4) ? TYP_INT : TYP_I_IMPL);
             // Must be 1, 2, 4, or 8, or else it wouldn't be passed in a register
             noway_assert(EA_SIZE_IN_BYTES(size) <= 8);
             assert((EA_SIZE_IN_BYTES(size) & (EA_SIZE_IN_BYTES(size) - 1)) == 0);
+#endif // !FEATURE_UNIX_AMD64_STRUCT_PASSING
 #elif defined(_TARGET_ARM64_)
             // Must be <= 16 bytes or else it wouldn't be passed in registers
-            noway_assert(EA_SIZE_IN_BYTES(size) <= 16);
-            // For now, if the struct is between (8, 16] bytes let's NYI since we would
-            // need to allocate a register pair for this.
-            if (size > 8)
-            {
-                NYI_ARM64("Struct parameter of size between 9 and 16 bytes needs a register pair");
-            }
-            storeType = TYP_I_IMPL;
+            noway_assert(EA_SIZE_IN_BYTES(size) <= MAX_PASS_MULTIREG_BYTES);
+
+            storeType = TYP_I_IMPL;   
+            size = emitActualTypeSize(storeType);
 #endif // _TARGET_ARM64_
         }
         else
@@ -4060,7 +4373,7 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
         regNumber srcRegNum = genMapRegArgNumToRegNum(argNum, storeType);
         
-        /* Stack argument - if the ref count is 0 don't care about it */
+        // Stack argument - if the ref count is 0 don't care about it
 
         if (!varDsc->lvOnFrame)
         {
@@ -4068,22 +4381,24 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
         }
         else
         {
-            getEmitter()->emitIns_S_R(ins_Store(storeType),
-                                      size,
-                                      srcRegNum,
-                                      varNum,
-                                      (regArgTab[argNum].slot-1) * TARGET_POINTER_SIZE);
+            // Since slot is typically 1, baseOffset is typically 0
+            int baseOffset = (regArgTab[argNum].slot - 1) * TARGET_POINTER_SIZE;
 
-#ifdef DEBUGGING_SUPPORT
-            if (compiler->opts.compScopeInfo && (compiler->info.compVarScopesCount > 0) && regArgTab[argNum].slot == 1)
+            getEmitter()->emitIns_S_R(ins_Store(storeType),
+                                        size,
+                                        srcRegNum,
+                                        varNum,
+                                        baseOffset);                                    
+
+            if (regArgTab[argNum].slot == 1)
                 psiMoveToStack(varNum);
-#endif
         }
 
         /* mark the argument as processed */
 
         regArgTab[argNum].processed = true;
         regArgMaskLive &= ~genRegMask(srcRegNum);
+
 #if defined(_TARGET_ARM_)
         if (storeType == TYP_DOUBLE)
         {
@@ -4094,7 +4409,6 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
     }
 
     /* Process any circular dependencies */
-
     if (regArgMaskLive)
     {
         unsigned        begReg, destReg, srcReg;
@@ -4105,21 +4419,32 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
         if (doingFloat)
         {
-#if defined(_TARGET_ARM_)
-            insCopy = INS_vmov;
-
+#if defined(_TARGET_ARM_) || defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+            insCopy = ins_Copy(TYP_FLOAT);
             // Compute xtraReg here when we have a float argument
             assert(xtraReg == REG_NA);
 
             regMaskTP fpAvailMask;  
                     
             fpAvailMask = RBM_FLT_CALLEE_TRASH & ~regArgMaskLive;
+#if defined(_TARGET_ARM_)
             fpAvailMask &= RBM_DBL_REGS;
+#else
+#if !defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+#error Error. Wrong architecture.
+#endif // !defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+#endif // defined(_TARGET_ARM_)
 
             if (fpAvailMask == RBM_NONE)
             {
                 fpAvailMask = RBM_ALLFLOAT & ~regArgMaskLive;
+#if defined(_TARGET_ARM_)
                 fpAvailMask &= RBM_DBL_REGS;
+#else
+#if !defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+#error Error. Wrong architecture.
+#endif // !defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+#endif // defined(_TARGET_ARM_)
             }
 
             assert(fpAvailMask != RBM_NONE);
@@ -4135,23 +4460,30 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
         for (argNum = 0; argNum < regState->rsCalleeRegArgNum; argNum++)
         {
-            /* If not a circular dependency then continue */
-
+            // If not a circular dependency then continue
             if (!regArgTab[argNum].circular)
+            {
                 continue;
+            }
 
-            /* If already processed the dependency then continue */
+            // If already processed the dependency then continue
 
             if (regArgTab[argNum].processed)
+            {
                 continue;
+            }
 
             if (regArgTab[argNum].slot == 0) // Not a register argument
+            {
                 continue;
-           
-            destReg = begReg = argNum;
-            srcReg  = regArgTab[argNum].trashBy; noway_assert(srcReg < regState->rsCalleeRegArgNum);
+            }
 
-            varNumDest = regArgTab[destReg].varNum; noway_assert(varNumDest < compiler->lvaCount);
+            destReg = begReg = argNum;
+            srcReg  = regArgTab[argNum].trashBy;
+            noway_assert(srcReg < regState->rsCalleeRegArgNum);
+
+            varNumDest = regArgTab[destReg].varNum; 
+            noway_assert(varNumDest < compiler->lvaCount);
             varDscDest = compiler->lvaTable + varNumDest;
             noway_assert(varDscDest->lvIsParam && varDscDest->lvIsRegArg);
 
@@ -4205,10 +4537,8 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                 regArgMaskLive &= ~genRegMask(varDscSrc->lvArgReg);
                 regArgMaskLive &= ~genRegMask(varDscDest->lvArgReg);
 
-#ifdef  DEBUGGING_SUPPORT
                 psiMoveToReg(varNumSrc );
                 psiMoveToReg(varNumDest);
-#endif
             }
             else
 #endif // _TARGET_XARCH_
@@ -4270,9 +4600,7 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
                 *pXtraRegClobbered = true;
 
-#ifdef  DEBUGGING_SUPPORT
                 psiMoveToReg(varNumDest, xtraReg);
-#endif
 
                 /* start moving everything to its right place */
 
@@ -4341,9 +4669,7 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
                 regTracker.rsTrackRegCopy(destRegNum, xtraReg);
 
-#ifdef  DEBUGGING_SUPPORT
                 psiMoveToReg(varNumSrc);
-#endif
 
                 /* mark the beginning register as processed */
 
@@ -4374,7 +4700,20 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
 
             varNum = regArgTab[argNum].varNum; noway_assert(varNum < compiler->lvaCount);
             varDsc = compiler->lvaTable + varNum;
-            regNumber regNum = genMapRegArgNumToRegNum(argNum, varDsc->TypeGet());
+            var_types regType = regArgTab[argNum].getRegType(compiler);
+            regNumber regNum = genMapRegArgNumToRegNum(argNum, regType);
+
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+            if (regType == TYP_UNDEF)
+            {
+                // This could happen if the reg in regArgTab[argNum] is of the other register file -
+                // for System V register passed structs where the first reg is GPR and the second an XMM reg.
+                // The next register file processing will process it.
+                regArgMaskLive &= ~genRegMask(regNum);
+                continue;
+            }
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+
 
             noway_assert(varDsc->lvIsParam && varDsc->lvIsRegArg);
 #ifndef _WIN64
@@ -4390,7 +4729,7 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
             noway_assert(varDsc->lvIsInReg() && !regArgTab[argNum].circular);
 
             /* Register argument - hopefully it stays in the same register */
-            regNumber destRegNum;
+            regNumber destRegNum = REG_NA;
             var_types destMemType = varDsc->TypeGet();
 
             if (regArgTab[argNum].slot == 1)
@@ -4405,6 +4744,7 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                 }
 #endif // _TARGET_ARM_
             }
+#ifndef _TARGET_64BIT_
             else if (regArgTab[argNum].slot == 2 &&
                      genActualType(destMemType) == TYP_LONG)
             {
@@ -4461,7 +4801,20 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                 destMemType = TYP_FLOAT;
                 destRegNum = REG_NEXT(varDsc->lvRegNum);
             }
-
+#endif // !_TARGET_64BIT_
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING) && defined(FEATURE_SIMD)
+            else
+            {
+                assert(regArgTab[argNum].slot == 2);
+                assert(argNum > 0);
+                assert(regArgTab[argNum - 1].slot == 1);
+                assert((varDsc->lvType == TYP_SIMD12) || (varDsc->lvType == TYP_SIMD16));
+                destRegNum = varDsc->lvRegNum;
+                noway_assert(regNum != destRegNum);
+                continue;
+            }
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING) && defined(FEATURE_SIMD)
+            noway_assert(destRegNum != REG_NA);
             if (destRegNum != regNum)
             {
                 /* Cannot trash a currently live register argument.
@@ -4487,9 +4840,7 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
                 
                 getEmitter()->emitIns_R_R(ins_Copy(destMemType), size, destRegNum, regNum);
 
-#ifdef  DEBUGGING_SUPPORT
                 psiMoveToReg(varNum);
-#endif
             }
 
             /* mark the argument as processed */
@@ -4497,16 +4848,44 @@ void            CodeGen::genFnPrologCalleeRegArgs(regNumber xtraReg,
             assert(!regArgTab[argNum].processed);
             regArgTab[argNum].processed = true;
             regArgMaskLive &= ~genRegMask(regNum);
+#if FEATURE_MULTIREG_ARGS
+            int argRegCount = 1;
 #ifdef _TARGET_ARM_
             if (genActualType(destMemType) == TYP_DOUBLE)
             {
-                assert(!regArgTab[argNum+1].processed);
-                regArgTab[argNum+1].processed = true;
-                regArgMaskLive &= ~genRegMask(REG_NEXT(regNum));
+                argRegCount = 2;
             }
 #endif
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING) && defined(FEATURE_SIMD)
+            if (varTypeIsStruct(varDsc) &&
+                argNum < (regState->rsCalleeRegArgNum - 1) &&
+                regArgTab[argNum+1].slot == 2)
+            {
+                argRegCount = 2;
+                int nextArgNum = argNum + 1;
+                regNumber nextRegNum = genMapRegArgNumToRegNum(nextArgNum, regArgTab[nextArgNum].getRegType(compiler));
+                noway_assert(regArgTab[nextArgNum].varNum == varNum);
+                // Emit a shufpd with a 0 immediate, which preserves the 0th element of the dest reg
+                // and moves the 0th element of the src reg into the 1st element of the dest reg.
+                getEmitter()->emitIns_R_R_I(INS_shufpd, emitActualTypeSize(varDsc->lvType), destRegNum, nextRegNum, 0);
+                // Set destRegNum to regNum so that we skip the setting of the register below,
+                // but mark argNum as processed and clear regNum from the live mask.
+                destRegNum = regNum;
+            }
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING) && defined(FEATURE_SIMD)
+            // Mark the rest of the argument registers corresponding to this multi-reg type as
+            // being processed and no longer live.
+            for (int regSlot = 1; regSlot < argRegCount; regSlot++)
+            {
+                int nextArgNum = argNum + regSlot;
+                assert(!regArgTab[nextArgNum].processed);
+                regArgTab[nextArgNum].processed = true;
+                regNumber nextRegNum = genMapRegArgNumToRegNum(nextArgNum, regArgTab[nextArgNum].getRegType(compiler));
+                regArgMaskLive &= ~genRegMask(nextRegNum);               
+            }
+#endif // FEATURE_MULTIREG_ARGS
         }
-
+    
         noway_assert(regArgMaskLiveSave != regArgMaskLive);   // if it doesn't change, we have an infinite loop
     }
 }
@@ -4640,11 +5019,7 @@ void    CodeGen::genEnregisterIncomingStackArgs()
             regTracker.rsTrackRegTrash(regNum);
         }
 
-
-#ifdef  DEBUGGING_SUPPORT
         psiMoveToReg(varNum);
-#endif
-
     }
 }
 
@@ -4764,7 +5139,15 @@ void CodeGen::genCheckUseBlockInit()
             /* With compInitMem, all untracked vars will have to be init'ed */
             /* VSW 102460 - Do not force initialization of compiler generated temps,
                unless they are untracked GC type or structs that contain GC pointers */
-            if ((!varDsc->lvTracked || varDsc->lvType == TYP_STRUCT) && varDsc->lvOnFrame &&
+#if FEATURE_SIMD
+            // TODO-1stClassStructs
+            // This is here to duplicate previous behavior, where TYP_SIMD8 locals
+            // were not being re-typed correctly.
+            if ((!varDsc->lvTracked || (varDsc->lvType == TYP_STRUCT) || (varDsc->lvType == TYP_SIMD8))     &&
+#else // !FEATURE_SIMD
+            if ((!varDsc->lvTracked || (varDsc->lvType == TYP_STRUCT))     &&
+#endif // !FEATURE_SIMD
+                varDsc->lvOnFrame                                          &&
                 (!varDsc->lvIsTemp || varTypeIsGC(varDsc->TypeGet()) || (varDsc->lvStructGcCount > 0)))
             {
                 varDsc->lvMustInit = true;
@@ -5024,14 +5407,15 @@ void CodeGen::genPushCalleeSavedRegisters()
         assert((maskSaveRegsInt & RBM_FP) != 0);
         assert((maskSaveRegsInt & RBM_LR) != 0);
 
-        if ((compiler->lvaOutgoingArgSpaceSize == 0) && (-totalFrameSize >= -512))
+        if ((compiler->lvaOutgoingArgSpaceSize == 0) && (totalFrameSize < 512))
         {
             // Case #1.
             //
             // Generate:
             //      stp fp,lr,[sp,#-framesz]!
             //
-            // The (-totalFrameSize >= -512) condition ensures that the predecrement of SP can occur with STP.
+            // The (totalFrameSize < 512) condition ensures that both the predecrement 
+            //  and the postincrement of SP can occur with STP.
             //
             // After saving callee-saved registers, we establish the frame pointer with:
             //      mov fp,sp
@@ -5256,10 +5640,9 @@ void CodeGen::genPushCalleeSavedRegisters()
             inst_RV(INS_push, reg, TYP_REF);
             compiler->unwindPush(reg);
 
-#ifdef DEBUGGING_SUPPORT
-            if (compiler->opts.compScopeInfo && (compiler->info.compVarScopesCount > 0) && !doubleAlignOrFramePointerUsed())
+            if (!doubleAlignOrFramePointerUsed())
                 psiAdjustStackLevel(REGSIZE_BYTES);
-#endif
+
             rsPushRegs &= ~regBit;
         }
     }
@@ -5290,14 +5673,14 @@ void CodeGen::genAllocLclFrame(unsigned  frameSize,
     assert(!compiler->info.compPublishStubParam || (REG_SECRET_STUB_PARAM != initReg));
 #endif // _TARGET_ARM_
 
-#ifdef _TARGET_X86_
+#ifdef _TARGET_XARCH_
     if (frameSize == REGSIZE_BYTES)
     {
-        // Frame size is 4
+        // Frame size is the same as register size.
         inst_RV(INS_push, REG_EAX, TYP_I_IMPL);
     }
     else 
-#endif // _TARGET_X86_
+#endif // _TARGET_XARCH_
     if (frameSize < CORINFO_PAGE_SIZE)
     {
 #ifndef _TARGET_ARM64_
@@ -5489,10 +5872,8 @@ void CodeGen::genAllocLclFrame(unsigned  frameSize,
 #ifndef _TARGET_ARM64_
     compiler->unwindAllocStack(frameSize);
 
-#ifdef DEBUGGING_SUPPORT
-    if (compiler->opts.compScopeInfo && (compiler->info.compVarScopesCount > 0) && !doubleAlignOrFramePointerUsed())
+    if (!doubleAlignOrFramePointerUsed())
         psiAdjustStackLevel(frameSize);
-#endif
 #endif // !_TARGET_ARM64_
 
 }
@@ -5876,7 +6257,7 @@ void            CodeGen::genPopCalleeSavedRegistersAndFreeLclFrame(bool         
 
     if (isFramePointerUsed())
     {
-        if ((compiler->lvaOutgoingArgSpaceSize == 0) && (-totalFrameSize >= -512))
+        if ((compiler->lvaOutgoingArgSpaceSize == 0) && (totalFrameSize < 512))
         {
             frameType = 1;
 
@@ -6412,7 +6793,9 @@ void        CodeGen::genZeroInitFrame(int        untrLclHi,
             }
 #endif // !_TARGET_64BIT_
 
-            if ((varDsc->TypeGet() == TYP_STRUCT) && !compiler->info.compInitMem)
+            if ((varDsc->TypeGet() == TYP_STRUCT) &&
+                !compiler->info.compInitMem       &&
+                (varDsc->lvExactSize >= TARGET_POINTER_SIZE))
             {
                 // We only initialize the GC variables in the TYP_STRUCT
                 const unsigned slots  = (unsigned)compiler->lvaLclSize(varNum) / REGSIZE_BYTES;
@@ -6729,12 +7112,14 @@ void CodeGen::genProfilingEnterCallback(regNumber  initReg,
         regNumber  argReg    = varDsc->lvArgReg;
         getEmitter()->emitIns_R_S(ins_Load(loadType), emitTypeSize(loadType), argReg, varNum, 0);
 
+#if FEATURE_VARARG
         if (compiler->info.compIsVarArgs && varTypeIsFloating(loadType))
         {
             regNumber intArgReg = compiler->getCallArgIntRegister(argReg);
             instruction ins = ins_CopyFloatToInt(loadType, TYP_LONG);
             inst_RV_RV(ins, argReg, intArgReg, loadType);
         }
+#endif //  FEATURE_VARARG
     }
 
     // If initReg is one of RBM_CALLEE_TRASH, then it needs to be zero'ed before using.
@@ -7173,6 +7558,7 @@ void CodeGen::genPrologPadForReJit()
 regMaskTP           CodeGen::genPInvokeMethodProlog(regMaskTP initRegs)
 {
     assert(compiler->compGeneratingProlog);
+    noway_assert(!compiler->opts.ShouldUsePInvokeHelpers());
     noway_assert(compiler->info.compCallUnmanaged);
 
     CORINFO_EE_INFO * pInfo = compiler->eeGetEEInfo();
@@ -7392,6 +7778,7 @@ regMaskTP           CodeGen::genPInvokeMethodProlog(regMaskTP initRegs)
 void                CodeGen::genPInvokeMethodEpilog()
 {
     noway_assert(compiler->info.compCallUnmanaged);
+    noway_assert(!compiler->opts.ShouldUsePInvokeHelpers());
     noway_assert(compiler->compCurBB == compiler->genReturnBB ||
                  (compiler->compTailCallUsed && (compiler->compCurBB->bbJumpKind == BBJ_THROW)) ||
                  (compiler->compJmpOpUsed && (compiler->compCurBB->bbFlags & BBF_HAS_JMP)));
@@ -8133,13 +8520,23 @@ void                CodeGen::genFnProlog()
     // since they are trashed by the jithelper call to setup the PINVOKE frame
     if (compiler->info.compCallUnmanaged)
     {
-        excludeMask |= (RBM_PINVOKE_FRAME | RBM_PINVOKE_TCB | RBM_PINVOKE_SCRATCH);
+        excludeMask |= RBM_PINVOKE_FRAME;
 
-        // We also must exclude the register used by compLvFrameListRoot when it is enregistered
-        //
-        LclVarDsc *  varDsc = &compiler->lvaTable[compiler->info.compLvFrameListRoot];
-        if (varDsc->lvRegister)
-            excludeMask |= genRegMask(varDsc->lvRegNum);
+        assert((!compiler->opts.ShouldUsePInvokeHelpers()) || (compiler->info.compLvFrameListRoot == BAD_VAR_NUM));
+        if (!compiler->opts.ShouldUsePInvokeHelpers())
+        {
+            noway_assert(compiler->info.compLvFrameListRoot < compiler->lvaCount);
+
+            excludeMask |= (RBM_PINVOKE_TCB | RBM_PINVOKE_SCRATCH);
+
+            // We also must exclude the register used by compLvFrameListRoot when it is enregistered
+            //
+            LclVarDsc *  varDsc = &compiler->lvaTable[compiler->info.compLvFrameListRoot];
+            if (varDsc->lvRegister)
+            {
+                excludeMask |= genRegMask(varDsc->lvRegNum);
+            }
+        }
     }
 #endif // INLINE_NDIRECT
 
@@ -8222,23 +8619,14 @@ void                CodeGen::genFnProlog()
     {
         inst_RV   (INS_push, REG_FPBASE, TYP_REF);
         compiler->unwindPush(REG_FPBASE);
-
-#ifdef DEBUGGING_SUPPORT
-        if (compiler->opts.compScopeInfo && (compiler->info.compVarScopesCount > 0))
-            psiAdjustStackLevel(sizeof(int));
-#endif
+        psiAdjustStackLevel(REGSIZE_BYTES);
 
 #ifndef _TARGET_AMD64_ // On AMD64, establish the frame pointer after the "sub rsp"
         inst_RV_RV(INS_mov, REG_FPBASE, REG_SPBASE);
         compiler->unwindSetFrameReg(REG_FPBASE, 0);
-
-#ifdef DEBUGGING_SUPPORT
-        if (compiler->opts.compScopeInfo && (compiler->info.compVarScopesCount > 0))
-            psiMoveESPtoEBP();
-#endif
+        psiMoveESPtoEBP();
 
 #if DOUBLE_ALIGN
-
         if  (compiler->genDoubleAlign())
         {
             noway_assert(isFramePointerUsed() == false);
@@ -8246,7 +8634,7 @@ void                CodeGen::genFnProlog()
 
             inst_RV_IV(INS_AND, REG_SPBASE, -8, EA_PTRSIZE);
         }
-#endif
+#endif // DOUBLE_ALIGN
 #endif // !_TARGET_AMD64_
     }
 #endif // _TARGET_XARCH_
@@ -8495,6 +8883,7 @@ void                CodeGen::genFnProlog()
 #endif // !LEGACY_BACKEND
 
     RegState *regState;
+    
     FOREACH_REGISTER_FILE(regState)
     {
         if (regState->rsCalleeRegArgMaskLiveIn)
@@ -9928,7 +10317,7 @@ void                CodeGen::genSetPSPSym(regNumber initReg,
 {
     assert(compiler->compGeneratingProlog);
 
-    if  (!compiler->ehNeedsPSPSym())
+    if (!compiler->ehNeedsPSPSym())
         return;
 
     noway_assert(isFramePointerUsed());             // We need an explicit frame pointer
@@ -9984,7 +10373,7 @@ void                CodeGen::genSetPSPSym(regNumber initReg,
     regNumber regTmp = initReg;
     *pInitRegZeroed = false;
 
-    getEmitter()->emitIns_R_R_I(INS_add, EA_PTRSIZE, regTmp, REG_SPBASE, SPtoCallerSPdelta);
+    getEmitter()->emitIns_R_R_Imm(INS_add, EA_PTRSIZE, regTmp, REG_SPBASE, SPtoCallerSPdelta);
     getEmitter()->emitIns_S_R(ins_Store(TYP_I_IMPL), EA_PTRSIZE, regTmp, compiler->lvaPSPSym, 0);
 
 #elif defined(_TARGET_AMD64_)
@@ -10431,7 +10820,7 @@ void                CodeGen::genPInvokeCallEpilog(LclVarDsc *  frameListRoot,
                                  0);
 #elif defined(_TARGET_AMD64_)
 
-        if (IMAGE_REL_BASED_REL32 != compiler->info.compCompHnd->getRelocTypeHint(addrOfCaptureThreadGlobal))
+        if (IMAGE_REL_BASED_REL32 != compiler->eeGetRelocTypeHint(addrOfCaptureThreadGlobal))
         {
             instGen_Set_Reg_To_Imm(EA_HANDLE_CNS_RELOC, reg3, (ssize_t)addrOfCaptureThreadGlobal);
 
@@ -10474,7 +10863,7 @@ void                CodeGen::genPInvokeCallEpilog(LclVarDsc *  frameListRoot,
 #else // !_TARGET_ARM_
 
 #ifdef _TARGET_AMD64_
-        if (IMAGE_REL_BASED_REL32 != compiler->info.compCompHnd->getRelocTypeHint(pAddrOfCaptureThreadGlobal))
+        if (IMAGE_REL_BASED_REL32 != compiler->eeGetRelocTypeHint(pAddrOfCaptureThreadGlobal))
         {
             instGen_Set_Reg_To_Imm(EA_PTR_DSP_RELOC, REG_ECX, (ssize_t)pAddrOfCaptureThreadGlobal);
             getEmitter()->emitIns_R_AR(ins_Load(TYP_I_IMPL), EA_PTRSIZE, REG_ECX, REG_ECX, 0);
@@ -10787,48 +11176,29 @@ void                CodeGen::genRestoreCalleeSavedFltRegs(unsigned lclFrameSize)
 
 
 //------------------------------------------------------------------------
-// ARM-specific methods used by both the classic and RyuJIT
+// Methods used to support FEATURE_MULTIREG_ARGS_OR_RET and HFA support for ARM32
 //------------------------------------------------------------------------
-#ifdef _TARGET_ARM_
-CORINFO_CLASS_HANDLE Compiler::GetHfaClassHandle(GenTreePtr tree)
+
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+bool Compiler::IsRegisterPassable(CORINFO_CLASS_HANDLE hClass)
 {
-    if (tree->TypeGet() == TYP_STRUCT)
+    if (hClass == NO_CLASS_HANDLE)
     {
-        // If the following assert fires (and we have a GT_COMMA), we'll probably need code like this:
-        //      while (tree->OperGet() == GT_COMMA) tree = tree->gtOp.gtOp2;
-
-        assert(tree->OperGet() != GT_COMMA);
-
-        switch (tree->OperGet())
-        {
-        case GT_CALL:
-            return tree->gtCall.gtRetClsHnd;
-
-        case GT_RET_EXPR:
-            return tree->gtRetExpr.gtRetClsHnd;
-
-        case GT_RETURN:
-            assert(tree->gtOp.gtOp1->gtOper == GT_LCL_VAR);
-            return GetHfaClassHandle(tree->gtOp.gtOp1);
-
-        case GT_LDOBJ:
-            return tree->gtLdObj.gtClass;
-
-        case GT_LCL_VAR:
-        case GT_LCL_FLD:
-            return lvaTable[tree->gtLclVarCommon.gtLclNum].lvVerTypeInfo.GetClassHandle();
-
-        case GT_ARGPLACE:
-            return tree->gtArgPlace.gtArgPlaceClsHnd;
-
-        case GT_ASG:
-            assert(tree->gtOp.gtOp1->gtOper == GT_LCL_VAR || tree->gtOp.gtOp1->gtOper == GT_LCL_FLD);
-            return GetHfaClassHandle(tree->gtOp.gtOp1);
-        }
+        return false;
     }
-    return NO_CLASS_HANDLE;
+
+    SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR structDesc;
+    eeGetSystemVAmd64PassStructInRegisterDescriptor(hClass, &structDesc);
+    return structDesc.passedInRegisters;
 }
 
+bool Compiler::IsRegisterPassable(GenTreePtr tree)
+{
+    return IsRegisterPassable(gtGetStructHandleIfPresent(tree));
+}
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
+
+#ifdef _TARGET_ARM_
 bool Compiler::IsHfa(CORINFO_CLASS_HANDLE hClass)
 {
     return varTypeIsFloating(GetHfaType(hClass));
@@ -10836,17 +11206,17 @@ bool Compiler::IsHfa(CORINFO_CLASS_HANDLE hClass)
 
 bool Compiler::IsHfa(GenTreePtr tree)
 {
-    return IsHfa(GetHfaClassHandle(tree));
+    return IsHfa(gtGetStructHandleIfPresent(tree));
 }
 
 var_types Compiler::GetHfaType(GenTreePtr tree)
 {
-    return (tree->TypeGet() == TYP_STRUCT) ? GetHfaType(GetHfaClassHandle(tree)) : TYP_UNDEF;
+    return (tree->TypeGet() == TYP_STRUCT) ? GetHfaType(gtGetStructHandleIfPresent(tree)) : TYP_UNDEF;
 }
 
 unsigned Compiler::GetHfaSlots(GenTreePtr tree)
 {
-    return GetHfaSlots(GetHfaClassHandle(tree));
+    return GetHfaSlots(gtGetStructHandleIfPresent(tree));
 }
 
 var_types Compiler::GetHfaType(CORINFO_CLASS_HANDLE hClass)
@@ -11089,6 +11459,7 @@ void                CodeGen::genSetScopeInfo()
 #endif // !_TARGET_64BIT_
 
 #ifdef FEATURE_SIMD
+            case TYP_SIMD8:
             case TYP_SIMD12:
             case TYP_SIMD16:
             case TYP_SIMD32:
@@ -11120,6 +11491,7 @@ void                CodeGen::genSetScopeInfo()
             case TYP_STRUCT:
             case TYP_BLK: //Needed because of the TYP_BLK stress mode
 #ifdef FEATURE_SIMD
+            case TYP_SIMD8:
             case TYP_SIMD12:
             case TYP_SIMD16:
             case TYP_SIMD32:

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -25,13 +24,12 @@ BOOL WaitForSingleObjectTest()
     LPSECURITY_ATTRIBUTES lpEventAttributes = 0;
     BOOL bManualReset = TRUE; 
     BOOL bInitialState = TRUE;
-    LPCTSTR lpName = "Event #6";
 
     HANDLE hEvent;
 
     /* Create an event, and ensure the HANDLE is valid */
     hEvent  = CreateEvent(lpEventAttributes, bManualReset, 
-                          bInitialState, lpName); 
+                          bInitialState, NULL); 
 
     if (hEvent != INVALID_HANDLE_VALUE)
     {
@@ -44,8 +42,7 @@ BOOL WaitForSingleObjectTest()
     
         if (dwRet != WAIT_OBJECT_0)
         {
-            Trace("WaitForSingleObjectTest:WaitForSingleObject %s "
-                   "failed (%x)\n",lpName,GetLastError());
+            Trace("WaitForSingleObjectTest:WaitForSingleObject failed (%x)\n", GetLastError());
         }
         else
         {
@@ -53,15 +50,13 @@ BOOL WaitForSingleObjectTest()
         
             if (!bRet)
             {
-                Trace("WaitForSingleObjectTest:CloseHandle %s "
-                       "failed (%x)\n",lpName,GetLastError());
+                Trace("WaitForSingleObjectTest:CloseHandle failed (%x)\n", GetLastError());
             }
         }
     }
     else
     {
-        Trace("WaitForSingleObjectTest:CreateEvent %s "
-               "failed (%x)\n",lpName,GetLastError());
+        Trace("WaitForSingleObjectTest:CreateEvent failed (%x)\n", GetLastError());
     }
     
     /* If the first section passed, Create another event, with the
@@ -75,7 +70,7 @@ BOOL WaitForSingleObjectTest()
         bInitialState = FALSE;
 
         hEvent = CreateEvent( lpEventAttributes, 
-                              bManualReset, bInitialState, lpName); 
+                              bManualReset, bInitialState, NULL); 
  
         if (hEvent != INVALID_HANDLE_VALUE)
         {
@@ -88,8 +83,7 @@ BOOL WaitForSingleObjectTest()
 
             if (dwRet != WAIT_TIMEOUT)
             {
-                Trace("WaitForSingleObjectTest:WaitForSingleObject %s "
-                       "failed (%x)\n",lpName,GetLastError());
+                Trace("WaitForSingleObjectTest:WaitForSingleObject failed (%x)\n", GetLastError());
             }
             else
             {
@@ -97,15 +91,13 @@ BOOL WaitForSingleObjectTest()
 
                 if (!bRet)
                 {
-                    Trace("WaitForSingleObjectTest:CloseHandle %s failed "
-                           "(%x)\n",lpName,GetLastError());
+                    Trace("WaitForSingleObjectTest:CloseHandle failed (%x)\n", GetLastError());
                 }
             }
         }
         else
         {
-            Trace("WaitForSingleObjectTest::CreateEvent %s failed "
-                   "(%x)\n",lpName,GetLastError());
+            Trace("WaitForSingleObjectTest::CreateEvent failed (%x)\n", GetLastError());
         }
     }
     return bRet;

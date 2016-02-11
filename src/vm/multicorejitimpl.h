@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: MultiCoreJITImpl.h
 //
@@ -480,7 +479,7 @@ extern bool     g_MulticoreJitEnabled;                           // Enable/Disab
 inline bool PrivateEtwEnabled()
 {
 #ifdef FEATURE_EVENT_TRACE
-    return MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_Context.IsEnabled != 0;
+    return ETW_PROVIDER_ENABLED(MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER) != 0;
 #else // FEATURE_EVENT_TRACE
     return FALSE;
 #endif // FEATURE_EVENT_TRACE

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=============================================================
 **
@@ -73,30 +72,6 @@ int __cdecl main(int argc, char *argv[])
         Fail("ERROR:%u: Failed to create File Mapping.\n", 
               GetLastError());
     }
-
-    /* Create a COPYWRITE, "swap", named file mapping.
-     * This test is unverifiable, here is a quote from MSDN:
-     * 
-     * Copy on write access. If you create the map with PAGE_WRITECOPY and 
-     * the view with FILE_MAP_COPY, you will receive a view to file. If you 
-     * write to it, the pages are automatically swappable and the modifications
-     * you make will not go to the original data file. 
-     *
-     */
-    hFileMap = CreateFileMapping(
-                            SWAP_HANDLE,
-                            NULL,           /*not inherited*/
-                            PAGE_WRITECOPY, /*writecopy*/
-                            0,              /*high-order size*/
-                            MAPPINGSIZE,    /*low-order size*/
-                            lpObjectName);  /*named object*/
-
-    if(NULL == hFileMap)
-    {
-        Fail("ERROR:%u: Failed to create File Mapping.\n", 
-              GetLastError());
-    }
-
 
 
     /* Terminate the PAL.

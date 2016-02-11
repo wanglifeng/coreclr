@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -1859,7 +1858,7 @@ AssemblySpecBindingCache::AssemblyBinding* AssemblySpecBindingCache::GetAssembly
         // It is possible that the AssemblySpec corresponds to a TPA assembly, so try the lookup
         // against the TPABinder context.
         ICLRPrivBinder* pTPABinderContext = pSpecDomain->GetTPABinderContext();
-        if (!AreSameBinderInstance(pTPABinderContext, pBinderContextForLookup))
+        if ((pTPABinderContext != NULL) && !AreSameBinderInstance(pTPABinderContext, pBinderContextForLookup))
         {
             UINT_PTR tpaBinderID = 0;
             HRESULT hr = pTPABinderContext->GetBinderID(&tpaBinderID);

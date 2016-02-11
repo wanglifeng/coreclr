@@ -1,7 +1,6 @@
-;
-; Copyright (c) Microsoft. All rights reserved.
-; Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-;
+; Licensed to the .NET Foundation under one or more agreements.
+; The .NET Foundation licenses this file to you under the MIT license.
+; See the LICENSE file in the project root for more information.
 
 ; ==++==
 ;
@@ -454,7 +453,7 @@ NESTED_END JIT_NewArr1OBJ_MP, _TEXT
 ;        Unfortunately, the compiler intrinsic for InterlockedExchangePointer seems to be broken and we
 ;        get bad code gen in gc.cpp on IA64. </TODO>
 
-M_GCLOCK equ ?m_GCLock@@3JC
+M_GCLOCK equ ?m_GCLock@@3HC
 extern M_GCLOCK:dword
 extern generation_table:qword
 

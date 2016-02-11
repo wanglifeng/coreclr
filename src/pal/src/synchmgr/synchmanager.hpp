@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -269,15 +268,19 @@ namespace CorUnix
 
         // Object signal count accessor methods
         LONG GetSignalCount(void) 
-        { 
+        {
+            _ASSERTE(m_lSignalCount >= 0);
             return m_lSignalCount; 
         }
         void SetSignalCount(LONG lSignalCount) 
         { 
+            _ASSERTE(m_lSignalCount >= 0);
+            _ASSERTE(lSignalCount >= 0);
             m_lSignalCount = lSignalCount; 
         }
         LONG DecrementSignalCount(void) 
-        { 
+        {
+            _ASSERTE(m_lSignalCount > 0);
             return --m_lSignalCount; 
         }
 
@@ -449,6 +452,7 @@ namespace CorUnix
         
     public:
         CSynchWaitController() : m_pProcLocalData(NULL) {}
+        virtual ~CSynchWaitController() = default;
         
         //
         // ISynchWaitController methods
@@ -476,15 +480,16 @@ namespace CorUnix
     {
     public:
         // NB: For perforformance purposes this class is supposed
-        //     to have no constructor or destructor
-        
+        //     to have no constructor
+        virtual ~CSynchStateController() = default;
+
         //
         // ISynchStateController methods
         //
-        virtual PAL_ERROR GetSignalCount(DWORD *pdwSignalCount);
-        virtual PAL_ERROR SetSignalCount(DWORD dwNewCount);
-        virtual PAL_ERROR IncrementSignalCount(DWORD dwAmountToIncrement);
-        virtual PAL_ERROR DecrementSignalCount(DWORD dwAmountToDecrement);
+        virtual PAL_ERROR GetSignalCount(LONG *plSignalCount);
+        virtual PAL_ERROR SetSignalCount(LONG lNewCount);
+        virtual PAL_ERROR IncrementSignalCount(LONG lAmountToIncrement);
+        virtual PAL_ERROR DecrementSignalCount(LONG lAmountToDecrement);
         virtual PAL_ERROR SetOwner(CPalThread *pNewOwningThread);
         virtual PAL_ERROR DecrementOwnershipCount(void);
         virtual void ReleaseController(void);
@@ -493,7 +498,7 @@ namespace CorUnix
     class CPalSynchronizationManager : public IPalSynchronizationManager
     {
         friend class CPalSynchMgrController;
-        template <class T> friend T *CorUnix::InternalNew(CorUnix::CPalThread *);
+        template <class T> friend T *CorUnix::InternalNew();
 
     public:
         // types
@@ -583,7 +588,7 @@ namespace CorUnix
         COwnedObjectsListNodeCache      m_cacheOwnedObjectsListNodes;
 
         // static methods
-        static PAL_ERROR Initialize(CPalThread * pthrCurrent);
+        static PAL_ERROR Initialize();
         static DWORD PALAPI WorkerThread(LPVOID pArg);
 
     protected:
@@ -597,11 +602,9 @@ namespace CorUnix
             CSynchControllerBase::ControllerType ctCtrlrType);
 
     private:
-        static IPalSynchronizationManager * CreatePalSynchronizationManager(
-            CPalThread * pthrCurrent);
+        static IPalSynchronizationManager * CreatePalSynchronizationManager();
         static PAL_ERROR StartWorker(CPalThread * pthrCurrent);
         static PAL_ERROR PrepareForShutdown(void);
-        static PAL_ERROR Shutdown(CPalThread *pthrCurrent, bool fFullCleanup);
 
     public:
         virtual ~CPalSynchronizationManager();
@@ -634,7 +637,7 @@ namespace CorUnix
                 InternalLeaveCriticalSection(pthrCurrent, &s_csSynchProcessLock);
                 
 #if SYNCHMGR_SUSPENSION_SAFE_CONDITION_SIGNALING && !SYNCHMGR_PIPE_BASED_THREAD_BLOCKING
-                pthrCurrent->synchronizationInfo.RunDeferredThreadConditionSignalings(pthrCurrent);
+                pthrCurrent->synchronizationInfo.RunDeferredThreadConditionSignalings();
 #endif // SYNCHMGR_SUSPENSION_SAFE_CONDITION_SIGNALING && !SYNCHMGR_PIPE_BASED_THREAD_BLOCKING
             }
         }
@@ -649,14 +652,14 @@ namespace CorUnix
                 InternalLeaveCriticalSection(pthrCurrent, &s_csSynchProcessLock);
 
 #if SYNCHMGR_SUSPENSION_SAFE_CONDITION_SIGNALING && !SYNCHMGR_PIPE_BASED_THREAD_BLOCKING
-                pthrCurrent->synchronizationInfo.RunDeferredThreadConditionSignalings(pthrCurrent);
+                pthrCurrent->synchronizationInfo.RunDeferredThreadConditionSignalings();
 #endif // SYNCHMGR_SUSPENSION_SAFE_CONDITION_SIGNALING && !SYNCHMGR_PIPE_BASED_THREAD_BLOCKING
             }            
             return lRet;
         }
         static LONG GetLocalSynchLockCount(CPalThread * pthrCurrent) 
         {
-            _ASSERTE(0 <= pthrCurrent->synchronizationInfo.m_lLocalSynchLockCount);            
+            _ASSERTE(0 <= pthrCurrent->synchronizationInfo.m_lLocalSynchLockCount);
             return pthrCurrent->synchronizationInfo.m_lLocalSynchLockCount;
         }
 
@@ -959,7 +962,6 @@ namespace CorUnix
             DWORD * pdwData);
 
         PAL_ERROR WakeUpLocalWorkerThread(
-            CPalThread * pthrCurrent,
             SynchWorkerCmd swcWorkerCmd);
 
         void DiscardAllPendingAPCs(
@@ -971,9 +973,9 @@ namespace CorUnix
             BYTE * pRecvBuf,
             LONG lBytes);
 
-        bool CreateProcessPipe(CPalThread * pthrCurrent);
+        bool CreateProcessPipe();
 
-        PAL_ERROR ShutdownProcessPipe(CPalThread * pthrCurrent);
+        PAL_ERROR ShutdownProcessPipe();
 
     public:
         //
@@ -1021,4 +1023,3 @@ namespace CorUnix
 }
 
 #endif // _SINCHMANAGER_HPP_
-

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 /*============================================================
@@ -275,9 +274,11 @@ FCIMPL4(INT32, WaitHandleNative::CorWaitMultipleNative, Object* waitObjectsUNSAF
     
     pWaitObjects = (PTRARRAYREF)waitObjects;  // array of objects on which to wait
     HANDLE* internalHandles = (HANDLE*) _alloca(numWaiters*sizeof(HANDLE));
+#ifndef FEATURE_CORECLR
     BOOL *hasThreadAffinity = (BOOL*) _alloca(numWaiters*sizeof(BOOL));
 
     BOOL mayRequireThreadAffinity = FALSE;
+#endif // !FEATURE_CORECLR
     for (int i=0;i<numWaiters;i++)
     {
         WAITHANDLEREF waitObject = (WAITHANDLEREF) pWaitObjects->m_Array[i];
@@ -288,15 +289,19 @@ FCIMPL4(INT32, WaitHandleNative::CorWaitMultipleNative, Object* waitObjectsUNSAF
         //   this behavior seems wrong but someone explicitly coded that condition so it must have been for a reason.        
         internalHandles[i] = waitObject->m_handle;
 
+#ifndef FEATURE_CORECLR
         // m_hasThreadAffinity is set for Mutex only 
         hasThreadAffinity[i] = waitObject->m_hasThreadAffinity;
         if (hasThreadAffinity[i]) {
             mayRequireThreadAffinity = TRUE;
         }
+#endif // !FEATURE_CORECLR
     }
 
     DWORD res = (DWORD) -1;
+#ifndef FEATURE_CORECLR
     ThreadAffinityHolder affinityHolder(mayRequireThreadAffinity);
+#endif // !FEATURE_CORECLR
     Context* targetContext;
     targetContext = pThread->GetContext();
     _ASSERTE(targetContext);
@@ -330,6 +335,7 @@ FCIMPL4(INT32, WaitHandleNative::CorWaitMultipleNative, Object* waitObjectsUNSAF
         }
     }
 
+#ifndef FEATURE_CORECLR
     if (mayRequireThreadAffinity) {
         if (waitForAll) {
             if (res >= (DWORD) WAIT_OBJECT_0 && res < (DWORD) WAIT_OBJECT_0 + numWaiters) {
@@ -367,6 +373,8 @@ FCIMPL4(INT32, WaitHandleNative::CorWaitMultipleNative, Object* waitObjectsUNSAF
             }
         }
     }
+#endif // !FEATURE_CORECLR
+
     retVal = res;
 
     HELPER_METHOD_FRAME_END();
@@ -449,5 +457,3 @@ FCIMPL5(INT32, WaitHandleNative::CorSignalAndWaitOneNative, SafeHandle* safeWait
 }
 FCIMPLEND
 #endif // !FEATURE_CORECLR
-
-

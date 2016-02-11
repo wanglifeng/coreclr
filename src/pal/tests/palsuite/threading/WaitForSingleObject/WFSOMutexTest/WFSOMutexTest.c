@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -54,10 +53,9 @@ int __cdecl main(int argc, char **argv)
 		    }
 
    //Create Mutex
-		hMutex = CreateMutex( 
-		    NULL,                       // no security attributes
-		    FALSE,                      // initially not owned
-		    "MutexToProtectGlobalCounter");  // name of mutex
+		hMutex = CreateMutex(NULL,      // no security attributes
+                             FALSE,     // initially not owned
+                             NULL);     // name of mutex
 
    //Check for Mutex Creation
 

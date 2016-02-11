@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // StgPool.h
 //
@@ -333,7 +332,7 @@ protected:
 //  helper for extension segments.
 //*****************************************************************************
     __checkReturn 
-    FORCEINLINE HRESULT GetDataReadOnly(UINT32 nOffset, __in MetaData::DataBlob *pData)
+    FORCEINLINE HRESULT GetDataReadOnly(UINT32 nOffset, __inout MetaData::DataBlob *pData)
     {
         LIMITED_METHOD_CONTRACT;
         _ASSERTE(IsReadOnly());
@@ -375,7 +374,7 @@ protected:
 //  helper for extension segments.
 //*****************************************************************************
     __checkReturn 
-    virtual HRESULT GetData(UINT32 nOffset, __in MetaData::DataBlob *pData)
+    virtual HRESULT GetData(UINT32 nOffset, __inout MetaData::DataBlob *pData)
     {
         WRAPPER_NO_CONTRACT;
         return GetDataReadOnly(nOffset, pData);
@@ -1094,6 +1093,10 @@ private:
 class StgBlobPool : public StgPool
 {
     friend class VerifyLayoutsMD;
+
+    using StgPool::InitNew;
+    using StgPool::InitOnMem;
+    
 public:
     StgBlobPool(ULONG ulGrowInc=DFT_BLOB_HEAP_SIZE) :
         StgPool(ulGrowInc),
@@ -1246,6 +1249,8 @@ public:
         m_cRef(1),
         m_dataCopy(NULL)
     { LIMITED_METHOD_CONTRACT; }
+
+    virtual ~CInMemoryStream() {}
 
     void InitNew(
         void        *pMem,
@@ -1405,7 +1410,7 @@ public:
     CGrowableStream(float multiplicativeGrowthRate = 2.0, DWORD additiveGrowthRate = 4096);
 
 #ifndef DACCESS_COMPILE  
-    ~CGrowableStream();
+    virtual ~CGrowableStream();
 #endif
 
     // Expose the total raw buffer.

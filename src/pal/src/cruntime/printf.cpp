@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -123,6 +122,52 @@ BOOL Internal_AddPaddingA(LPSTR *Out, INT Count, LPSTR In,
     }
 }
 
+/*******************************************************************************
+Function:
+  PAL_printf_arg_remover
+
+Parameters:
+  ap
+    - pointer to the va_list from which to remove arguments
+  Width
+    - the width of the current format operation
+  Precision
+    - the precision of the current format option
+  Type
+    - the type of the argument for the current format option
+  Prefix
+    - the prefix for the current format option
+*******************************************************************************/
+void PAL_printf_arg_remover(va_list *ap, INT Width, INT Precision, INT Type, INT Prefix)
+{
+    /* remove arg and precision if needed */
+    if (PRECISION_STAR == Precision ||
+        PRECISION_INVALID == Precision)
+    {
+        (void)va_arg(*ap, int);
+    }
+    if (WIDTH_STAR == Width ||
+        WIDTH_INVALID == Width)
+    {
+        (void)va_arg(*ap, int);
+    }
+    if (Type == PFF_TYPE_FLOAT)
+    {
+        (void)va_arg(*ap, double);
+    }
+    else if (Type == PFF_TYPE_INT && Prefix == PFF_PREFIX_LONGLONG)
+    {
+        (void)va_arg(*ap, INT64);
+    }
+    else if (Type == PFF_TYPE_INT || Type == PFF_TYPE_CHAR)
+    {
+        (void)va_arg(*ap, int);
+    }
+    else
+    {
+        (void)va_arg(*ap, void *);
+    }
+}
 
 /*++
 Function:
@@ -482,7 +527,7 @@ static BOOL Internal_ScanfExtractFormatA(LPCSTR *Fmt, LPSTR Out, int iOutSize, L
     /* grab prefix of 'I64' for __int64 */
     if ((*Fmt)[0] == 'I' && (*Fmt)[1] == '6' && (*Fmt)[2] == '4')
     {
-        /* convert to 'q'/'ll' so BSD's sscanf can handle it */
+        /* convert to 'q'/'ll' so Unix sscanf can handle it */
         *Fmt += 3;
         *Prefix = SCANF_PREFIX_LONGLONG;
     }
@@ -502,6 +547,11 @@ static BOOL Internal_ScanfExtractFormatA(LPCSTR *Fmt, LPSTR Out, int iOutSize, L
 #endif
         {
             *Prefix = SCANF_PREFIX_LONG; /* give it a wide prefix */
+        }
+        if (**Fmt == 'l')
+        {
+            *Prefix = SCANF_PREFIX_LONGLONG;
+            ++(*Fmt);
         }
     }
     else if (**Fmt == 'L')
@@ -793,7 +843,7 @@ static BOOL Internal_ScanfExtractFormatW(LPCWSTR *Fmt, LPSTR Out, int iOutSize, 
     /* grab prefix of 'I64' for __int64 */
     if ((*Fmt)[0] == 'I' && (*Fmt)[1] == '6' && (*Fmt)[2] == '4')
     {
-        /* convert to 'q'/'ll' so BSD's sscanf can handle it */
+        /* convert to 'q'/'ll' so that Unix sscanf can handle it */
         *Fmt += 3;
         *Prefix = SCANF_PREFIX_LONGLONG;
     }
@@ -813,6 +863,11 @@ static BOOL Internal_ScanfExtractFormatW(LPCWSTR *Fmt, LPSTR Out, int iOutSize, 
 #endif
         {
             *Prefix = SCANF_PREFIX_LONG; /* give it a wide prefix */
+        }
+        if (**Fmt == 'l')
+        {
+            *Prefix = SCANF_PREFIX_LONGLONG;
+            ++(*Fmt);
         }
     }
     else if (**Fmt == 'L')
@@ -1031,8 +1086,6 @@ int PAL_vsscanf(LPCSTR Buffer, LPCSTR Format, va_list ap)
     INT Prefix;
     INT Type = -1;
 
-    THREADMarkDiagnostic("PAL_vsscanf");
-
     while (*Fmt)
     {
         if (!*Buff && Length == 0)
@@ -1207,7 +1260,6 @@ int PAL_wvsscanf(LPCWSTR Buffer, LPCWSTR Format, va_list ap)
     INT Prefix;
     INT Type = -1;
 
-    THREADMarkDiagnostic("PAL_wvsscanf");
     while (*Fmt)
     {
         if (!*Buff && Length == 0)
@@ -1447,12 +1499,11 @@ PAL_sscanf(
 
     PERF_ENTRY(sscanf);
     ENTRY("PAL_sscanf (buffer=%p (%s), format=%p (%s))\n", buffer, buffer, format, format);
-    THREADMarkDiagnostic("PAL_sscanf");
 
     va_start(ap, format);
     Length = PAL_vsscanf(buffer, format, ap);
     va_end(ap);
-	
+
     LOGEXIT("PAL_sscanf returns int %d\n", Length);
     PERF_EXIT(sscanf);
     return Length;
@@ -1533,7 +1584,6 @@ PAL_swscanf(
 
     PERF_ENTRY(swscanf);
     ENTRY("PAL_swscanf (buffer=%p (%S), format=%p (%S))\n", buffer, buffer, format, format);
-    THREADMarkDiagnostic("PAL_swscanf");
 
     va_start(ap, format);
     Length = PAL_wvsscanf(buffer, format, ap);

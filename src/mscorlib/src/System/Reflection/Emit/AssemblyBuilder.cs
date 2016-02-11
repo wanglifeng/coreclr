@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 //*************************************************************************************************************
@@ -1766,7 +1767,7 @@ namespace System.Reflection.Emit
 
                     // In memory this module is not the manifest module and has a valid file token
                     // On disk it will be the manifest module so lets clean the file token
-                    // We should not retrive FileToken after the assembly has been saved
+                    // We should not retrieve FileToken after the assembly has been saved
                     // If that is absolutely necessary, we need two separate fields on ModuleBuilderData:
                     // the in memory file token and the on disk file token.
                     assemblyModule.m_moduleData.FileToken = 0;

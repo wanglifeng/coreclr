@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 #ifndef _H_INTEROP_UTIL
@@ -232,12 +231,12 @@ ULONG SafeAddRefPreemp(IUnknown* pUnk);
 
 //--------------------------------------------------------------------------------
 // Release helper, enables and disables GC during call-outs
-HRESULT SafeVariantChangeType(VARIANT* pVarRes, VARIANT* pVarSrc,
+HRESULT SafeVariantChangeType(_Inout_ VARIANT* pVarRes, _In_ VARIANT* pVarSrc,
                               unsigned short wFlags, VARTYPE vt);
 
 //--------------------------------------------------------------------------------
 // Release helper, enables and disables GC during call-outs
-HRESULT SafeVariantChangeTypeEx(VARIANT* pVarRes, VARIANT* pVarSrc,
+HRESULT SafeVariantChangeTypeEx(_Inout_ VARIANT* pVarRes, _In_ VARIANT* pVarSrc,
                           LCID lcid, unsigned short wFlags, VARTYPE vt);
 
 //--------------------------------------------------------------------------------
@@ -392,7 +391,7 @@ void GetComClassFromCLSID(REFCLSID clsid, STRINGREF srefServer, OBJECTREF* pRef)
 void GetComClassHelper(OBJECTREF *pRef,
                        EEClassFactoryInfoHashTable *pClassFactHash,
                        ClassFactoryInfo *pClassFactInfo,
-                       __in_opt __in_z WCHAR *wszProgID);
+                       __in_opt WCHAR *wszProgID);
 
 //-------------------------------------------------------------
 // check if a ComClassFactory/WinRTClassFactory has been setup for this class

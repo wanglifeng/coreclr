@@ -1,14 +1,13 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=============================================================
 **
 ** Source: GetCalendarInfoW.c
 **
 ** Purpose: Positive test the GetCalendarInfoW API.
-**          Call GetCalendarInfoW to retrive the information of all 
+**          Call GetCalendarInfoW to retrieve the information of all 
 **          calendars
 **
 **
@@ -53,11 +52,11 @@ int __cdecl main(int argc, char *argv[])
     for(index=0; index<13; index++)
     {
         Calendar = index + 1;
-        /*retrive the specified calendar info*/
+        /*retrieve the specified calendar info*/
         err = GetCalendarInfoW(Locale,/*locale idendifier*/
                             Calendar, /*calendar identifier*/
                             CalType,  /*calendar tyope*/
-                            NULL,     /*buffer to store the retrive info*/
+                            NULL,     /*buffer to store the retreive info*/
                             0,        /*alwayse zero*/
                             &dwValue);/*to store the requrest data*/               
         if(0 == err)

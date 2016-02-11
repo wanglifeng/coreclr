@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=============================================================
 **
@@ -70,7 +69,7 @@ int __cdecl main(int argc, char *argv[])
     if(FILE_ATTRIBUTE_DIRECTORY != 
             (dwFileAttribute & FILE_ATTRIBUTE_DIRECTORY))
     {
-        Fail("The retrived directory name is not a valid directory!\n");
+        Fail("The retrieved directory name is not a valid directory!\n");
     }
 
     PAL_Terminate();

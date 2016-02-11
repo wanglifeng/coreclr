@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ==++==
 //
@@ -990,6 +989,7 @@ void DebuggerController::DeleteAllControllers()
     while (pDebuggerController != NULL)
     {
         pNextDebuggerController = pDebuggerController->m_next;
+        pDebuggerController->DebuggerDetachClean();
         pDebuggerController->Delete();
         pDebuggerController = pNextDebuggerController;
     }    
@@ -1054,6 +1054,11 @@ void DebuggerController::Delete()
             this, m_eventQueuedCount));
         m_deleted = true;
     }
+}
+
+void DebuggerController::DebuggerDetachClean()
+{
+    //do nothing here
 }
 
 //static
@@ -2775,7 +2780,7 @@ DebuggerControllerPatch *DebuggerController::GetEnCPatch(const BYTE *address)
 #endif //EnC_SUPPORTED
 
 // DebuggerController::DispatchPatchOrSingleStep - Ask any patches that are active at a given 
-// address if they want to do anything about the exception that's occured there.  How: For the given 
+// address if they want to do anything about the exception that's occurred there.  How: For the given 
 // address, go through the list of patches & see if any of them are interested (by invoking their 
 // DebuggerController's TriggerPatch).  Put any DCs that are interested into a queue and then calls
 // SendEvent on each.
@@ -4462,6 +4467,42 @@ DebuggerPatchSkip::~DebuggerPatchSkip()
     m_pSharedPatchBypassBuffer->Release();
 #endif
 }
+
+void DebuggerPatchSkip::DebuggerDetachClean()
+{
+// Since for ARM SharedPatchBypassBuffer isn't existed, we don't have to anything here.
+#ifndef _TARGET_ARM_
+   // Fix for Bug 1176448
+   // When a debugger is detaching from the debuggee, we need to move the IP if it is pointing 
+   // somewhere in PatchBypassBuffer.All managed threads are suspended during detach, so changing 
+   // the context without notifications is safe.
+   // Notice:
+   // THIS FIX IS INCOMPLETE!It attempts to update the IP in the cases we can easily detect.However, 
+   // if a thread is in pre - emptive mode, and its filter context has been propagated to a VEH 
+   // context, then the filter context we get will be NULL and this fix will not work.Our belief is 
+   // that this scenario is rare enough that it doesn’t justify the cost and risk associated with a 
+   // complete fix, in which we would have to either :
+   // 1. Change the reference counting for DebuggerController and then change the exception handling 
+   // logic in the debuggee so that we can handle the debugger event after detach.
+   // 2. Create a "stack walking" implementation for native code and use it to get the current IP and 
+   // set the IP to the right place.
+
+    Thread *thread = GetThread();
+    if (thread != NULL)
+    {
+        BYTE *patchBypass = m_pSharedPatchBypassBuffer->PatchBypass;
+        CONTEXT *context = thread->GetFilterContext();
+        if (patchBypass != NULL &&
+            context != NULL &&
+            (size_t)GetIP(context) >= (size_t)patchBypass &&
+            (size_t)GetIP(context) <= (size_t)(patchBypass + MAX_INSTRUCTION_LENGTH + 1))
+        {
+            SetIP(context, (PCODE)((BYTE *)GetIP(context) - (patchBypass - (BYTE *)m_address)));
+        }
+    }
+#endif
+}
+
 
 //
 // We have to have a whole seperate function for this because you
@@ -8403,9 +8444,9 @@ DebuggerFuncEvalComplete::DebuggerFuncEvalComplete(Thread *thread,
   : DebuggerController(thread, NULL)
 {
 #ifdef _TARGET_ARM_
-    m_pDE = reinterpret_cast<DebuggerEval*>(((DWORD)dest) & ~THUMB_CODE);
+    m_pDE = reinterpret_cast<DebuggerEvalBreakpointInfoSegment*>(((DWORD)dest) & ~THUMB_CODE)->m_associatedDebuggerEval;
 #else
-    m_pDE = reinterpret_cast<DebuggerEval*>(dest);
+    m_pDE = reinterpret_cast<DebuggerEvalBreakpointInfoSegment*>(dest)->m_associatedDebuggerEval;
 #endif
 
     // Add an unmanaged patch at the destination.

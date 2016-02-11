@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=====================================================================
 **
@@ -35,7 +34,22 @@ int __cdecl main(int argc, char **argv)
         return FAIL;
     }
     
-    
+    // Create the test file
+    FILE *testFile = fopen(FileName, "w");
+    if (testFile == NULL)
+    {
+        Fail("Unexpected error: Unable to open file %S with fopen. \n", FileName);
+    }
+    if (fputs("testing", testFile) == EOF)
+    {
+        Fail("Unexpected error: Unable to write to file %S with fputs. \n", FileName);
+    }
+    if (fclose(testFile) != 0)
+    {
+        Fail("Unexpected error: Unable to close file %S with fclose. \n", FileName);
+    }
+    testFile = NULL;
+
     /* Try to set the file to Read-only|Normal ... It should
      end up as Readonly, since this overrides Normal*/
 

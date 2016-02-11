@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*=====================================================================
 **
@@ -20,8 +19,18 @@ const int InterruptTime = 1000;
 /* We need to keep in mind that BSD has a timer resolution of 10ms, so
    we need to adjust our delta to keep that in mind. Besides we need some 
    tolerance to account for different scheduling strategies, heavy load 
-   scenarios, etc */
-const DWORD AcceptableDelta = 50;
+   scenarios, etc.
+   
+   Real-world data also tells us we can expect a big difference between
+   values when run on real iron vs run in a hypervisor.
+
+   Thread-interruption times when run on bare metal will typically yield
+   around 0ms on Linux and between 0 and 16ms on FreeBSD. However, when run
+   in a hypervisor (like VMWare ESXi) we may get values around an order of
+   magnitude higher, up to 110 ms for some tests.
+*/
+const DWORD AcceptableDelta = 150;
+
 const int Iterations = 5;
 
 void RunTest(BOOL AlertThread);
@@ -138,19 +147,24 @@ VOID PALAPI APCFunc(ULONG_PTR dwParam)
 /* Entry Point for child thread. */
 DWORD PALAPI SleeperProc(LPVOID lpParameter)
 {
-    DWORD OldTickCount;
-    DWORD NewTickCount;
+    UINT64 OldTimeStamp;
+    UINT64 NewTimeStamp;
     BOOL Alertable;
     DWORD ret;
 
     Alertable = (BOOL) lpParameter;
 
-    OldTickCount = GetTickCount();
+    LARGE_INTEGER performanceFrequency;
+    if (!QueryPerformanceFrequency(&performanceFrequency))
+    {
+        return FAIL;
+    }
+
+    OldTimeStamp = GetHighPrecisionTimeStamp(performanceFrequency);
 
     ret = SleepEx(ChildThreadSleepTime, Alertable);
     
-    NewTickCount = GetTickCount();
-
+    NewTimeStamp = GetHighPrecisionTimeStamp(performanceFrequency);
 
     if (Alertable && ret != WAIT_IO_COMPLETION)
     {
@@ -163,16 +177,7 @@ DWORD PALAPI SleeperProc(LPVOID lpParameter)
     }
 
 
-    /* 
-    * Check for DWORD wraparound
-    */
-    if (OldTickCount>NewTickCount)
-    {
-        OldTickCount -= NewTickCount+1;
-        NewTickCount  = 0xFFFFFFFF;
-    }
-
-    ThreadSleepDelta = NewTickCount - OldTickCount;
+    ThreadSleepDelta = NewTimeStamp - OldTimeStamp;
 
     return 0;
 }

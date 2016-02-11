@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // shimprivate.h
 // 
@@ -69,6 +68,7 @@ class ShimProxyCallback :
 
 public:
     ShimProxyCallback(ShimProcess * pShim);
+    virtual ~ShimProxyCallback() {}
 
     // Implement IUnknown
     ULONG STDMETHODCALLTYPE AddRef();
@@ -857,7 +857,7 @@ public:
               CorDebugChainReason chainReason,
               BOOL                fIsManaged,
               RSLock *            pShimLock);
-    ~ShimChain();
+    virtual ~ShimChain();
 
     void Neuter();
     BOOL IsNeutered();
@@ -939,7 +939,7 @@ class ShimChainEnum : public ICorDebugChainEnum
 {
 public:
     ShimChainEnum(ShimStackWalk * pSW, RSLock * pShimLock);
-    ~ShimChainEnum();
+    virtual ~ShimChainEnum();
 
     void Neuter();
     BOOL IsNeutered();
@@ -999,7 +999,7 @@ class ShimFrameEnum : public ICorDebugFrameEnum
 {
 public:
     ShimFrameEnum(ShimStackWalk * pSW, ShimChain * pChain, UINT32 frameStartIndex, UINT32 frameEndIndex, RSLock * pShimLock);
-    ~ShimFrameEnum();
+    virtual ~ShimFrameEnum();
 
     void Neuter();
     BOOL IsNeutered();

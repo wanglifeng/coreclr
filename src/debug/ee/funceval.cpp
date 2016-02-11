@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ****************************************************************************
 // File: funceval.cpp
 // 
@@ -2961,7 +2960,7 @@ void FuncEvalWrapper(MethodDescCallSite* pMDCS, DebuggerEval *pDE, ARG_SLOT *pAr
 /*
  * RecordFuncEvalException
  *
- * Helper function records the details of an exception that occured during a FuncEval
+ * Helper function records the details of an exception that occurred during a FuncEval
  * Note that this should be called from within the target domain of the FuncEval.
  *
  * Parameters:
@@ -3486,7 +3485,7 @@ static void GCProtectArgsAndDoNormalFuncEval(DebuggerEval *pDE,
         RecordFuncEvalException( pDE, ppException);
     }
     // Note: we need to catch all exceptioins here because they all get reported as the result of
-    // the funceval.  If a ThreadAbort occured other than for a funcEval abort, we'll re-throw it manually.
+    // the funceval.  If a ThreadAbort occurred other than for a funcEval abort, we'll re-throw it manually.
     EX_END_CATCH(SwallowAllExceptions);
 
     // Restore context
@@ -3692,7 +3691,7 @@ void FuncEvalHijackRealWorker(DebuggerEval *pDE, Thread* pThread, FuncEvalFrame*
         RecordFuncEvalException( pDE, ppException);
     }
     // Note: we need to catch all exceptioins here because they all get reported as the result of
-    // the funceval.  If a ThreadAbort occured other than for a funcEval abort, we'll re-throw it manually.
+    // the funceval.  If a ThreadAbort occurred other than for a funcEval abort, we'll re-throw it manually.
     EX_END_CATCH(SwallowAllExceptions);
 
     GCPROTECT_END();
@@ -3872,21 +3871,12 @@ void * STDCALL FuncEvalHijackWorker(DebuggerEval *pDE)
     if (!pDE->m_evalDuringException)
     {
         // Signal to the helper thread that we're done with our func eval.  Start by creating a DebuggerFuncEvalComplete
-        // object. Give it an address at which to create the patch, which is a chunk of memory inside of our
+        // object. Give it an address at which to create the patch, which is a chunk of memory specified by our
         // DebuggerEval big enough to hold a breakpoint instruction.
 #ifdef _TARGET_ARM_
-        dest = (BYTE*)((DWORD)&(pDE->m_breakpointInstruction) | THUMB_CODE);
+        dest = (BYTE*)((DWORD)&(pDE->m_bpInfoSegment->m_breakpointInstruction) | THUMB_CODE);
 #else
-        dest = &(pDE->m_breakpointInstruction);
-#endif
-
-        // Here is kind of a cheat... we make sure that the address that we patch and jump to is actually also the ptr
-        // to our DebuggerEval. This works because m_breakpointInstruction is the first field of the DebuggerEval
-        // struct.
-#ifdef _TARGET_ARM_
-        _ASSERTE((((DWORD)dest) & ~THUMB_CODE) == (DWORD)pDE);
-#else
-        _ASSERTE(dest == pDE);
+        dest = &(pDE->m_bpInfoSegment->m_breakpointInstruction);
 #endif
 
         //
@@ -3954,7 +3944,7 @@ void * STDCALL FuncEvalHijackWorker(DebuggerEval *pDE)
 }
 
 
-#if defined(WIN64EXCEPTIONS)
+#if defined(WIN64EXCEPTIONS) && !defined(FEATURE_PAL)
 
 EXTERN_C EXCEPTION_DISPOSITION
 FuncEvalHijackPersonalityRoutine(IN     PEXCEPTION_RECORD   pExceptionRecord
@@ -3985,6 +3975,6 @@ FuncEvalHijackPersonalityRoutine(IN     PEXCEPTION_RECORD   pExceptionRecord
 }
 
 
-#endif // WIN64EXCEPTIONS
+#endif // WIN64EXCEPTIONS && !FEATURE_PAL
 
 #endif // ifndef DACCESS_COMPILE

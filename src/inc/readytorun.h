@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // readytorun.h
@@ -195,6 +194,8 @@ enum ReadyToRunHelper
     READYTORUN_HELPER_Overflow                  = 0x22,
     READYTORUN_HELPER_RngChkFail                = 0x23,
     READYTORUN_HELPER_FailFast                  = 0x24,
+    READYTORUN_HELPER_ThrowNullRef              = 0x25,
+    READYTORUN_HELPER_ThrowDivZero              = 0x26,
 
     // Write barriers
     READYTORUN_HELPER_WriteBarrier              = 0x30,

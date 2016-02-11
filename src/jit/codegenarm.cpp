@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -301,7 +300,7 @@ void                CodeGen::genCodeForBBlist()
 
         /* Figure out which registers hold variables on entry to this block */
 
-        regSet.rsMaskVars       = RBM_NONE;
+        regSet.ClearMaskVars();
         gcInfo.gcRegGCrefSetCur = RBM_NONE;
         gcInfo.gcRegByrefSetCur = RBM_NONE;
 
@@ -340,26 +339,6 @@ void                CodeGen::genCodeForBBlist()
                 VarSetOps::AddElemD(compiler, gcInfo.gcVarPtrSetCur, varIndex);
             }
         }
-
-#ifdef DEBUG
-        if (compiler->verbose)
-        {
-            printf("\t\t\t\t\t\t\tLive regs: ");
-            if (regSet.rsMaskVars == newLiveRegSet)
-            {
-                printf("(unchanged) ");
-            }
-            else
-            {
-                printRegMaskInt(regSet.rsMaskVars);
-                compiler->getEmitter()->emitDispRegSet(regSet.rsMaskVars);
-                printf(" => ");
-            }
-            printRegMaskInt(newLiveRegSet);
-            compiler->getEmitter()->emitDispRegSet(newLiveRegSet);
-            printf("\n");
-        }
-#endif // DEBUG
 
         regSet.rsMaskVars = newLiveRegSet;
         gcInfo.gcMarkRegSetGCref(newRegGCrefSet DEBUG_ARG(true));
@@ -778,7 +757,7 @@ void                CodeGen::genCodeForBBlist()
                 }
             }
         }
-#endif _TARGET_AMD64_
+#endif //_TARGET_AMD64_
 
         /* Do we need to generate a jump or return? */
 
@@ -1010,7 +989,7 @@ void                CodeGen::instGen_Set_Reg_To_Imm(emitAttr    size,
             getEmitter()->emitIns_R_AI(INS_lea, EA_PTR_DSP_RELOC, reg, imm);
         }
         else
-#endif _TARGET_AMD64_
+#endif // _TARGET_AMD64_
         {
             getEmitter()->emitIns_R_I(INS_mov, size, reg, imm);
         }
@@ -1377,9 +1356,9 @@ CodeGen::genCodeForTreeNode(GenTreePtr treeNode)
         genProduceReg(treeNode);
         break;
 
-    case GT_MATH:
+    case GT_INTRINSIC:
         {
-            NYI("GT_MATH");
+            NYI("GT_INTRINSIC");
         }
         genProduceReg(treeNode);
         break;
@@ -1705,7 +1684,7 @@ CodeGen::genRangeCheck(GenTreePtr  oper)
     genConsumeIfReg(src2);
 
     getEmitter()->emitInsBinary(INS_cmp, emitAttr(TYP_INT), src1, src2);
-    genJumpToThrowHlpBlk(jmpKind, Compiler::ACK_RNGCHK_FAIL, bndsChk->gtIndRngFailBB);
+    genJumpToThrowHlpBlk(jmpKind, SCK_RNGCHK_FAIL, bndsChk->gtIndRngFailBB);
 
 }
 
@@ -1838,7 +1817,7 @@ void CodeGen::genUnspillRegIfNeeded(GenTree *tree)
             }
 #endif // DEBUG
 
-            regSet.rsMaskVars |= genGetRegMask(varDsc);
+            regSet.AddMaskVars(genGetRegMask(varDsc));
         }
         else
         {

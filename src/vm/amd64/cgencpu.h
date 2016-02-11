@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // CGENCPU.H -
 //
 // Various helper routines for generating AMD64 assembly code.
@@ -66,14 +65,15 @@ EXTERN_C void FastCallFinalizeWorker(Object *obj, PCODE funcPtr);
 #define CACHE_LINE_SIZE                         64   // Current AMD64 processors have 64-byte cache lines as per AMD64 optmization manual
 #define LOG2SLOT                                LOG2_PTRSIZE
 
-#define ENREGISTERED_RETURNTYPE_MAXSIZE         8    // bytes
 #define ENREGISTERED_RETURNTYPE_INTEGER_MAXSIZE 8    // bytes
 #define ENREGISTERED_PARAMTYPE_MAXSIZE          8    // bytes
 
 #ifdef UNIX_AMD64_ABI
-#define CALLDESCR_ARGREGS                       1   // CallDescrWorker has ArgumentRegister parameter
-#define CALLDESCR_FPARGREGS                     1   // CallDescrWorker has FloatArgumentRegisters parameter
+#define ENREGISTERED_RETURNTYPE_MAXSIZE         16   // bytes
+#define CALLDESCR_ARGREGS                       1    // CallDescrWorker has ArgumentRegister parameter
+#define CALLDESCR_FPARGREGS                     1    // CallDescrWorker has FloatArgumentRegisters parameter
 #else
+#define ENREGISTERED_RETURNTYPE_MAXSIZE         8    // bytes
 #define COM_STUBS_SEPARATE_FP_LOCATIONS
 #define CALLDESCR_REGTYPEMAP                    1
 #endif
@@ -81,7 +81,9 @@ EXTERN_C void FastCallFinalizeWorker(Object *obj, PCODE funcPtr);
 #define INSTRFMT_K64SMALL
 #define INSTRFMT_K64
 
+#ifndef FEATURE_PAL
 #define USE_REDIRECT_FOR_GCSTRESS
+#endif // FEATURE_PAL
 
 //
 // REX prefix byte
@@ -265,9 +267,11 @@ struct CalleeSavedRegistersPointers {
 
 #ifdef UNIX_AMD64_ABI
 
+#define NUM_FLOAT_ARGUMENT_REGISTERS 8
+
 typedef DPTR(struct FloatArgumentRegisters) PTR_FloatArgumentRegisters;
 struct FloatArgumentRegisters {
-     M128A d[8];   // xmm0-xmm7
+     M128A d[NUM_FLOAT_ARGUMENT_REGISTERS];   // xmm0-xmm7
 };
 
 #endif
@@ -475,11 +479,23 @@ struct DECLSPEC_ALIGN(8) UMEntryThunkCode
 
 struct HijackArgs
 {
+#ifndef PLATFORM_UNIX
     union
     {
         ULONG64 Rax;
         ULONG64 ReturnValue;
     };
+#else // PLATFORM_UNIX
+    union
+    {
+        struct
+        {
+            ULONG64 Rax;
+            ULONG64 Rdx;
+        };
+        ULONG64 ReturnValue[2];
+    };
+#endif // PLATFORM_UNIX
     CalleeSavedRegisters Regs;
     union
     {

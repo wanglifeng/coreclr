@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 #include "common.h"
@@ -14,7 +13,6 @@
 #include "excep.h"
 #include "eeconfig.h"
 #include "gc.h"
-#include "gcenv.h"
 #include "eventtrace.h"
 #ifdef FEATURE_FUSION
 #include "assemblysink.h"
@@ -2554,6 +2552,10 @@ void SystemDomain::Init()
 #endif // FEATURE_VERSIONING
 
     m_BaseLibrary.Append(m_SystemDirectory);
+    if (!m_BaseLibrary.EndsWith(DIRECTORY_SEPARATOR_CHAR_W))
+    {
+        m_BaseLibrary.Append(DIRECTORY_SEPARATOR_CHAR_W);
+    }
     m_BaseLibrary.Append(g_pwBaseLibrary);
     m_BaseLibrary.Normalize();
 
@@ -2915,6 +2917,10 @@ void SystemDomain::LoadBaseSystemClasses()
     g_pStringClass = MscorlibBinder::LoadPrimitiveType(ELEMENT_TYPE_STRING);
     _ASSERTE(g_pStringClass->GetBaseSize() == ObjSizeOf(StringObject)+sizeof(WCHAR));
     _ASSERTE(g_pStringClass->GetComponentSize() == 2);
+
+    // Used by Buffer::BlockCopy
+    g_pByteArrayMT = ClassLoader::LoadArrayTypeThrowing(
+        TypeHandle(MscorlibBinder::GetElementType(ELEMENT_TYPE_U1))).AsArray()->GetMethodTable();
 
 #ifndef CROSSGEN_COMPILE
     ECall::PopulateManagedStringConstructors();
@@ -3693,7 +3699,7 @@ void SystemDomain::ExecuteMainMethod(HMODULE hMod, __in_opt LPWSTR path /*=NULL*
         pDomain->GetMulticoreJitManager().AutoStartProfile(pDomain);
 #endif
 
-        pDomain->m_pRootAssembly->ExecuteMainMethod(NULL);
+        pDomain->m_pRootAssembly->ExecuteMainMethod(NULL, TRUE /* waitForOtherThreads */);
     }
 
     pThread->ReturnToContext(&frame);
@@ -4775,8 +4781,8 @@ void SystemDomain::GetDevpathW(__out_ecount_opt(1) LPWSTR* pDevpath, DWORD* pdwD
                 RegKeyHolder userKey;
                 RegKeyHolder machineKey;
 
-                WCHAR pVersion[MAX_PATH];
-                DWORD dwVersion = MAX_PATH;
+                WCHAR pVersion[MAX_PATH_FNAME];
+                DWORD dwVersion = MAX_PATH_FNAME;
                 HRESULT hr = S_OK;
                 hr = FusionBind::GetVersion(pVersion, &dwVersion);
                 if(SUCCEEDED(hr)) {
@@ -8014,7 +8020,7 @@ BOOL AppDomain::AddAssemblyToCache(AssemblySpec* pSpec, DomainAssembly *pAssembl
     // check for context propagation
     if (bRetVal && pSpec->GetParentLoadContext() == LOADCTX_TYPE_LOADFROM && pAssembly->GetFile()->GetLoadContext() == LOADCTX_TYPE_DEFAULT)
     {
-        // LoadFrom propagation occured, store it in a way reachable by Load() (the "post-policy" one)
+        // LoadFrom propagation occurred, store it in a way reachable by Load() (the "post-policy" one)
         AssemblySpec loadSpec;
         loadSpec.CopyFrom(pSpec);
         loadSpec.SetParentAssembly(NULL);
@@ -8256,8 +8262,11 @@ public:
         }
         else
         {
-            IfFailRet(FString::Utf8_Unicode(szName, bIsAscii, wzBuffer, *pcchBuffer));
-            *pcchBuffer = cchName;
+            IfFailRet(FString::Utf8_Unicode(szName, bIsAscii, wzBuffer, cchBuffer));
+            if (pcchBuffer != nullptr)
+            {
+                *pcchBuffer = cchName;
+            }
             return S_OK;
         }
     }
@@ -11285,7 +11294,7 @@ BOOL AppDomain::StopEEAndUnwindThreads(unsigned int retryCount, BOOL *pFMarkUnlo
 
                 if (pThread->PreemptiveGCDisabledOther())
                 {
-        #ifdef FEATURE_HIJACK
+        #if defined(FEATURE_HIJACK) && !defined(PLATFORM_UNIX)
                     Thread::SuspendThreadResult str = pThread->SuspendThread();
                     if (str == Thread::STR_Success)
                     {
@@ -14221,7 +14230,7 @@ BOOL RuntimeCanUseAppPathAssemblyResolver(DWORD adid)
 }
 
 // Returns S_OK if the assembly was successfully loaded
-HRESULT RuntimeInvokeHostAssemblyResolver(CLRPrivBinderAssemblyLoadContext *pLoadContextToBindWithin, IAssemblyName *pIAssemblyName, ICLRPrivAssembly **ppLoadedAssembly)
+HRESULT RuntimeInvokeHostAssemblyResolver(INT_PTR pManagedAssemblyLoadContextToBindWithin, IAssemblyName *pIAssemblyName, ICLRPrivAssembly **ppLoadedAssembly)
 {
     CONTRACTL
     {
@@ -14250,9 +14259,6 @@ HRESULT RuntimeInvokeHostAssemblyResolver(CLRPrivBinderAssemblyLoadContext *pLoa
         
         GCPROTECT_BEGIN(_gcRefs);
         
-        // Get the pointer to the managed assembly load context
-        INT_PTR ptrManagedAssemblyLoadContext = pLoadContextToBindWithin->GetManagedAssemblyLoadContext();
-        
         // Prepare to invoke System.Runtime.Loader.AssemblyLoadContext.Resolve method.
         //
         // First, initialize an assembly spec for the requested assembly
@@ -14274,7 +14280,7 @@ HRESULT RuntimeInvokeHostAssemblyResolver(CLRPrivBinderAssemblyLoadContext *pLoa
             // Setup the arguments for the call
             ARG_SLOT args[2] =
             {
-                PtrToArgSlot(ptrManagedAssemblyLoadContext), // IntPtr for managed assembly load context instance
+                PtrToArgSlot(pManagedAssemblyLoadContextToBindWithin), // IntPtr for managed assembly load context instance
                 ObjToArgSlot(_gcRefs.oRefAssemblyName), // AssemblyName instance
             };
 
@@ -14833,7 +14839,7 @@ PTR_DomainAssembly AppDomain::FindAssembly(PTR_ICLRPrivAssembly pHostAssembly)
 
 #endif //FEATURE_HOSTED_BINDER
 
-#if !defined(DACCESS_COMPILE) && defined(FEATURE_CORECLR)
+#if !defined(DACCESS_COMPILE) && defined(FEATURE_CORECLR) && defined(FEATURE_NATIVE_IMAGE_GENERATION)
 
 void ZapperSetBindingPaths(ICorCompilationDomain *pDomain, SString &trustedPlatformAssemblies, SString &platformResourceRoots, SString &appPaths, SString &appNiPaths)
 {

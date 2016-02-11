@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -317,7 +316,7 @@ void starttests(int threadID)
 	ULONGLONG startTime = 0;
 	ULONGLONG endTime = 0;
 
-	LONG volatile * Destination;
+	LONG volatile Destination;
 	LONG Exchange;
 	LONG Comperand;
 	LONG result;
@@ -336,10 +335,10 @@ void starttests(int threadID)
 
 	for (i=0;i<REPEAT_COUNT;i++)
 	{
-		  *Destination = (LONG volatile) threadID;
+		  Destination = (LONG volatile) threadID;
 		  Exchange    = (LONG) i;
 		  Comperand   = (LONG) threadID;
-		  result = InterlockedCompareExchange( Destination, Exchange, Comperand);
+		  result = InterlockedCompareExchange(&Destination, Exchange, Comperand);
 
 		  if( i != result )
 		  {

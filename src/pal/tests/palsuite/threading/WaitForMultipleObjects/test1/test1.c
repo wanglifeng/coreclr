@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -29,23 +28,18 @@ BOOL WaitForMultipleObjectsTest()
     LPSECURITY_ATTRIBUTES lpEventAttributes = NULL;
     BOOL bManualReset = TRUE; 
     BOOL bInitialState = TRUE;
-    LPTSTR lpName[MAX_EVENTS];
 
     HANDLE hEvent[MAX_EVENTS];
 
     /* Run through this for loop and create 4 events */ 
     for (i = 0; i < MAX_EVENTS; i++)
     {
-        lpName[i] = (TCHAR*)malloc(MAX_PATH);
-        sprintf(lpName[i],"Event #%d",i);
-
         hEvent[i] = CreateEvent( lpEventAttributes, 
-                                 bManualReset, bInitialState, lpName[i]);  
+                                 bManualReset, bInitialState, NULL);  
 
         if (hEvent[i] == INVALID_HANDLE_VALUE)
         {
-            Trace("WaitForMultipleObjectsTest:CreateEvent "
-                   "%s failed (%x)\n",lpName[i],GetLastError());
+            Trace("WaitForMultipleObjectsTest:CreateEvent %u failed (%x)\n", i, GetLastError());
             bRet = FALSE;
             break;
         }
@@ -55,8 +49,7 @@ BOOL WaitForMultipleObjectsTest()
 
         if (!bRet)
         {
-            Trace("WaitForMultipleObjectsTest:SetEvent %s "
-                   "failed (%x)\n",lpName[i],GetLastError());
+            Trace("WaitForMultipleObjectsTest:SetEvent %u failed (%x)\n", i, GetLastError());
             bRet = FALSE;
             break;
         }
@@ -66,8 +59,7 @@ BOOL WaitForMultipleObjectsTest()
 
         if (dwRet != WAIT_OBJECT_0)
         {
-            Trace("WaitForMultipleObjectsTest:WaitForSingleObject "
-                   "%s failed (%x)\n",lpName[i],GetLastError());
+            Trace("WaitForMultipleObjectsTest:WaitForSingleObject %u failed (%x)\n", i, GetLastError());
             bRet = FALSE;
             break;
         }
@@ -79,8 +71,7 @@ BOOL WaitForMultipleObjectsTest()
 
         if (!bRet)
         {
-            Trace("WaitForMultipleObjectsTest:ResetEvent %s "
-                   "failed (%x)\n",lpName[i],GetLastError());
+            Trace("WaitForMultipleObjectsTest:ResetEvent %u failed (%x)\n", i, GetLastError());
             bRet = FALSE;
             break;
         }
@@ -89,8 +80,7 @@ BOOL WaitForMultipleObjectsTest()
 
         if (dwRet != WAIT_TIMEOUT)
         {
-            Trace("WaitForMultipleObjectsTest:WaitForSingleObject "
-                   "%s failed (%x)\n",lpName[i],GetLastError());
+            Trace("WaitForMultipleObjectsTest:WaitForSingleObject %u failed (%x)\n", i, GetLastError());
             bRet = FALSE;
             break;
         }
@@ -117,8 +107,7 @@ BOOL WaitForMultipleObjectsTest()
 
         if (dwRet != WAIT_TIMEOUT)
         {
-            Trace("WaitForMultipleObjectsTest:WaitForMultipleObjects "
-                   "%s failed (%x)\n",lpName[0],GetLastError());
+            Trace("WaitForMultipleObjectsTest:WaitForMultipleObjects failed (%x)\n", GetLastError());
         }
         else
         {
@@ -137,9 +126,7 @@ BOOL WaitForMultipleObjectsTest()
                         
                         if (!bRet)
                         {
-                            Trace("WaitForMultipleObjectsTest:SetEvent "
-                                   "%s failed (%x)\n",
-                                   lpName[j],GetLastError());
+                            Trace("WaitForMultipleObjectsTest:SetEvent %u failed (%x)\n", j, GetLastError());
                             break;
                         }
                     }
@@ -149,9 +136,7 @@ BOOL WaitForMultipleObjectsTest()
                         
                         if (!bRet)
                         {
-                            Trace("WaitForMultipleObjectsTest:ResetEvent "
-                                   "%s failed (%x)\n",
-                                   lpName[j],GetLastError());
+                            Trace("WaitForMultipleObjectsTest:ResetEvent %u failed (%x)\n", j, GetLastError());
                         }
                     }
                 }
@@ -164,8 +149,7 @@ BOOL WaitForMultipleObjectsTest()
                 
                 if (dwRet != WAIT_OBJECT_0+i)
                 {
-                    Trace("WaitForMultipleObjectsTest:WaitForMultipleObjects"
-                           " %s failed (%x)\n",lpName[0],GetLastError());
+                    Trace("WaitForMultipleObjectsTest:WaitForMultipleObjects failed (%x)\n", GetLastError());
                     bRet = FALSE;
                     break;
                 }
@@ -178,17 +162,43 @@ BOOL WaitForMultipleObjectsTest()
             
             if (!bRet)
             {
-                Trace("WaitForMultipleObjectsTest:CloseHandle %s "
-                       "failed (%x)\n",lpName[i],GetLastError());
+                Trace("WaitForMultipleObjectsTest:CloseHandle %u failed (%x)\n", i, GetLastError());
             }
-            
-            free((void*)lpName[i]);
         }
     }
     
     return bRet;
 }
 
+BOOL WaitMultipleDuplicateHandleTest()
+{
+    BOOL testResult = TRUE;
+    const HANDLE eventHandle = CreateEvent(NULL, TRUE, TRUE, NULL);
+    HANDLE eventHandles[] = {eventHandle, eventHandle};
+
+    // WaitAny - Wait for any of the events (no error expected)
+    DWORD result = WaitForMultipleObjects(sizeof(eventHandles) / sizeof(eventHandles[0]), eventHandles, FALSE, 0);
+    if (result != WAIT_OBJECT_0)
+    {
+        Trace("WaitMultipleDuplicateHandleTest:WaitAny failed (%x)\n", GetLastError());
+        testResult = FALSE;
+    }
+
+    // WaitAll - Wait for all of the events (error expected)
+    result = WaitForMultipleObjects(sizeof(eventHandles) / sizeof(eventHandles[0]), eventHandles, TRUE, 0);
+    if (result != WAIT_FAILED)
+    {
+        Trace("WaitMultipleDuplicateHandleTest:WaitAll failed: call unexpectedly succeeded\n");
+        testResult = FALSE;
+    }
+    else if (GetLastError() != ERROR_INVALID_PARAMETER)
+    {
+        Trace("WaitMultipleDuplicateHandleTest:WaitAll failed: unexpected last error (%x)\n");
+        testResult = FALSE;
+    }
+
+    return testResult;
+}
 
 int __cdecl main(int argc, char **argv)
 {
@@ -202,6 +212,12 @@ int __cdecl main(int argc, char **argv)
     {
         Fail ("Test failed\n");
     }
+
+    if (!WaitMultipleDuplicateHandleTest())
+    {
+        Fail("Test failed\n");
+    }
+
     PAL_Terminate();
     return ( PASS );
 

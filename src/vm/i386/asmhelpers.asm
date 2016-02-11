@@ -1,7 +1,6 @@
-;
-; Copyright (c) Microsoft. All rights reserved.
-; Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-;
+; Licensed to the .NET Foundation under one or more agreements.
+; The .NET Foundation licenses this file to you under the MIT license.
+; See the LICENSE file in the project root for more information.
 
 ; ==++==
 ;
@@ -117,6 +116,11 @@ EXTERN @JIT_InternalThrow@4:PROC
 EXTERN @ProfileEnter@8:PROC
 EXTERN @ProfileLeave@8:PROC
 EXTERN @ProfileTailcall@8:PROC
+
+UNREFERENCED macro arg
+    local unref
+    unref equ size arg
+endm
 
 FASTCALL_FUNC macro FuncName,cbArgs
 FuncNameReal EQU @&FuncName&@&cbArgs
@@ -327,6 +331,27 @@ ___CxxFrameHandler3 ENDP
 endif ; _DEBUG
 endif ; FEATURE_CORECLR
 
+; Register CLR exception handlers defined on the C++ side with SAFESEH.
+; Note that these directives must be in a file that defines symbols that will be used during linking,
+; otherwise it's possible that the resulting .obj will completly be ignored by the linker and these
+; directives will have no effect.
+COMPlusFrameHandler proto c
+.safeseh COMPlusFrameHandler
+
+COMPlusNestedExceptionHandler proto c
+.safeseh COMPlusNestedExceptionHandler
+
+FastNExportExceptHandler proto c
+.safeseh FastNExportExceptHandler
+
+UMThunkPrestubHandler proto c
+.safeseh UMThunkPrestubHandler
+
+ifdef FEATURE_COMINTEROP
+COMPlusFrameHandlerRevCom proto c
+.safeseh COMPlusFrameHandlerRevCom
+endif
+
 ; Note that RtlUnwind trashes EBX, ESI and EDI, so this wrapper preserves them
 CallRtlUnwind PROC stdcall public USES ebx esi edi, pEstablisherFrame :DWORD, callback :DWORD, pExceptionRecord :DWORD, retVal :DWORD
 
@@ -465,7 +490,7 @@ _GetSpecificCpuTypeAsm@0 PROC public
         push    ecx
         popfd               ; Save the updated flags.
         pushfd
-        pop     ecx         ; Retrive the updated flags
+        pop     ecx         ; Retrieve the updated flags
         xor     ecx, eax    ; Test if it actually changed (bit set means yes)
         push    eax
         popfd               ; Restore the flags
@@ -507,7 +532,7 @@ _GetSpecificCpuFeaturesAsm@4 PROC public
         push    ecx
         popfd               ; Save the updated flags.
         pushfd
-        pop     ecx         ; Retrive the updated flags
+        pop     ecx         ; Retrieve the updated flags
         xor     ecx, eax    ; Test if it actually changed (bit set means yes)
         push    eax
         popfd               ; Restore the flags
@@ -1236,6 +1261,7 @@ UM2MThunk_WrapperHelper proc stdcall public,
                         pAddr : DWORD,
                         pEntryThunk : DWORD,
                         pThread : DWORD
+    UNREFERENCED argLen
 
     push    ebx
 

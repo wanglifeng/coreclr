@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 
 // 
@@ -192,6 +191,31 @@ ClrDataAccess::ServerOomData(CLRDATA_ADDRESS addr, DacpOomData *oomData)
     oomData->loh_p = pOOMInfo->loh_p;
 
     return S_OK;
+}
+
+HRESULT 
+ClrDataAccess::ServerGCInterestingInfoData(CLRDATA_ADDRESS addr, DacpGCInterestingInfoData *interestingInfoData)
+{
+#ifdef GC_CONFIG_DRIVEN
+    SVR::gc_heap *pHeap = PTR_SVR_gc_heap(TO_TADDR(addr));
+
+    size_t* dataPoints = (size_t*)&(pHeap->interesting_data_per_heap);
+    for (int i = 0; i < NUM_GC_DATA_POINTS; i++)
+        interestingInfoData->interestingDataPoints[i] = dataPoints[i];
+    size_t* mechanisms = (size_t*)&(pHeap->compact_reasons_per_heap);
+    for (int i = 0; i < MAX_COMPACT_REASONS_COUNT; i++)
+        interestingInfoData->compactReasons[i] = mechanisms[i];
+    mechanisms = (size_t*)&(pHeap->expand_mechanisms_per_heap);
+    for (int i = 0; i < MAX_EXPAND_MECHANISMS_COUNT; i++)
+        interestingInfoData->expandMechanisms[i] = mechanisms[i];
+    mechanisms = (size_t*)&(pHeap->interesting_mechanism_bits_per_heap);
+    for (int i = 0; i < MAX_GC_MECHANISM_BITS_COUNT; i++)
+        interestingInfoData->bitMechanisms[i] = mechanisms[i];
+
+    return S_OK;
+#else
+    return E_NOTIMPL;
+#endif //GC_CONFIG_DRIVEN
 }
 
 HRESULT ClrDataAccess::ServerGCHeapAnalyzeData(CLRDATA_ADDRESS heapAddr, DacpGcHeapAnalyzeData *analyzeData)

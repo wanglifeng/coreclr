@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include "stdafx.h"
 #include "perflog.h"
@@ -115,7 +114,7 @@ void PerfLog::PerfLogInitialize()
         // the file here for writing and close in PerfLogDone().
         m_hPerfLogFileHandle = WszCreateFile (
 #ifdef PLATFORM_UNIX
-                                              L"/tmp/PerfData.dat",
+                                              W("/tmp/PerfData.dat"),
 #else
                                               W("C:\\PerfData.dat"),
 #endif

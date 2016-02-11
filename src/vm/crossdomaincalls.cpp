@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // 
 // File: CrossDomainCalls.cpp
 // 
@@ -1264,7 +1263,7 @@ CrossDomainChannel::BlitAndCall()
             MetaSig mSig(m_pCliMD, thDeclaringType);
             ArgIterator argit(&mSig);
 
-            int    offset;
+            int offset;
             while (TransitionBlock::InvalidOffset != (offset = argit.GetNextOffset()))
             {    
                 int regArgNum = TransitionBlock::GetArgumentIndexFromOffset(offset);
@@ -2068,7 +2067,7 @@ CrossDomainChannel::MarshalAndCall()
     CDC_DETERMINE_DECLARING_TYPE(m_pCliMD, TypeHandle(CTPMethodTable::GetMethodTableBeingProxied(m_pFrame->GetThis())));
     MetaSig mSig(m_pCliMD, thDeclaringType);
     ArgIterator argit(&mSig);
-    int    ofs;
+    int ofs;
 
     // NumFixedArgs() doesn't count the "this" object, but SizeOfFrameArgumentArray() does.
     dwNumArgs = mSig.NumFixedArgs();
@@ -2141,7 +2140,7 @@ CrossDomainChannel::MarshalAndCall()
     TADDR pTransitionBlock = m_pFrame->GetTransitionBlock();
 
     for (int argNum = 0;
-        TransitionBlock::InvalidOffset != (ofs = argit.GetNextOffset());
+         TransitionBlock::InvalidOffset != (ofs = argit.GetNextOffset());
          argNum++
         )
     {

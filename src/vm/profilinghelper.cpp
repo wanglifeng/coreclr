@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // ProfilingHelper.cpp
 // 
@@ -289,7 +288,6 @@ void CurrentProfilerStatus::Set(ProfilerStatus newProfStatus)
 // See code:#LoadUnloadCallbackSynchronization.
 CRITSEC_COOKIE ProfilingAPIUtility::s_csStatus = NULL;
 
-#ifndef FEATURE_PAL
 
 SidBuffer * ProfilingAPIUtility::s_pSidBuffer = NULL;
 
@@ -337,8 +335,6 @@ void ProfilingAPIUtility::AppendSupplementaryInformation(int iStringResource, SS
         GetCurrentProcessId(),
         iStringResource);
 }
-
-#endif // !FEATURE_PAL
 
 //---------------------------------------------------------------------------------------
 //
@@ -792,7 +788,7 @@ HRESULT ProfilingAPIUtility::AttemptLoadProfilerForStartup()
         return S_FALSE;
     }
 
-    if ((wszProfilerDLL != NULL) && (wcslen(wszProfilerDLL) >= MAX_PATH))
+    if ((wszProfilerDLL != NULL) && (wcslen(wszProfilerDLL) >= MAX_LONGPATH))
     {
         LOG((LF_CORPROF, LL_INFO10, "**PROF: Profiling flag set, but COR_PROFILER_PATH was not set properly.\n"));
 

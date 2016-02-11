@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 ////////////////////////////////////////////////////////////////////////////
@@ -99,11 +100,8 @@ namespace System.Globalization
         [System.Security.SecurityCritical]  // auto-generated
         private void SetName(string name)
         {
-            // when creating region by culture name, we keep the region name as the culture name so regions
-            // created by custom culture names can be differentiated from built in regions.
-            this.m_name = name.Equals(this.m_cultureData.SREGIONNAME, StringComparison.OrdinalIgnoreCase) ?
-                                this.m_cultureData.SREGIONNAME :
-                                this.m_cultureData.CultureName;
+            // Use the name of the region we found
+            this.m_name = this.m_cultureData.SREGIONNAME;
         }
 
         ////////////////////////////////////////////////////////////////////////

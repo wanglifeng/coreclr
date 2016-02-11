@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // ===========================================================================
 // File: JITinterfaceCpu.CPP
@@ -18,9 +17,9 @@
 #include "excep.h"
 #include "threadsuspend.h"
 
-extern BYTE* g_ephemeral_low; 
-extern BYTE* g_ephemeral_high;
-extern DWORD*  g_card_table;
+extern uint8_t* g_ephemeral_low;
+extern uint8_t* g_ephemeral_high;
+extern uint32_t* g_card_table;
 
 // Patch Labels for the various write barriers
 EXTERN_C void JIT_WriteBarrier_End();

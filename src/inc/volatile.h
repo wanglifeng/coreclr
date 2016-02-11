@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // Volatile.h
 // 
@@ -72,11 +71,15 @@
 #error The Volatile type is currently only defined for Visual C++ and GNU C++
 #endif
 
-#if defined(__GNUC__) && !defined(_X86_) && !defined(_AMD64_)
-#error The Volatile type is currently only defined for GCC when targeting x86 or AMD64 CPUs
+#if defined(__GNUC__) && !defined(_X86_) && !defined(_AMD64_) && !defined(_ARM_) && !defined(_ARM64_)
+#error The Volatile type is currently only defined for GCC when targeting x86, AMD64, ARM or ARM64 CPUs
 #endif
 
-#ifdef __GNUC__
+#if defined(__GNUC__)
+#if defined(_ARM_) || defined(_ARM64_)
+// This is functionally equivalent to the MemoryBarrier() macro used on ARM on Windows.
+#define VOLATILE_MEMORY_BARRIER() asm volatile ("dmb sy" : : : "memory")
+#else
 //
 // For GCC, we prevent reordering by the compiler by inserting the following after a volatile
 // load (to prevent subsequent operations from moving before the read), and before a volatile 
@@ -89,6 +92,7 @@
 // notice.
 //
 #define VOLATILE_MEMORY_BARRIER() asm volatile ("" : : : "memory")
+#endif // !_ARM_
 #elif defined(_ARM_) && _ISO_VOLATILE
 // ARM has a very weak memory model and very few tools to control that model. We're forced to perform a full
 // memory barrier to preserve the volatile semantics. Technically this is only necessary on MP systems but we
@@ -165,6 +169,19 @@ void VolatileStore(T* pt, T val)
 
 #ifndef DACCESS_COMPILE
     VOLATILE_MEMORY_BARRIER();
+    *(T volatile *)pt = val;
+#else
+    *pt = val;
+#endif
+}
+
+template<typename T>
+inline
+void VolatileStoreWithoutBarrier(T* pt, T val)
+{
+    STATIC_CONTRACT_SUPPORTS_DAC_HOST_ONLY;
+
+#ifndef DACCESS_COMPILE
     *(T volatile *)pt = val;
 #else
     *pt = val;

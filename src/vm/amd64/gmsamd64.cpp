@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /**************************************************************/
 /*                       gmsAMD64.cpp                         */
@@ -10,10 +9,9 @@
 #include "common.h"
 #include "gmscpu.h"
 
-
-
 void LazyMachState::unwindLazyState(LazyMachState* baseState,
                                     MachState* unwoundState,
+                                    DWORD threadId,
                                     int funCallDepth /* = 1 */,
                                     HostCallPreference hostCallPreference /* = (HostCallPreference)(-1) */)
 {
@@ -56,7 +54,17 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
 #ifndef FEATURE_PAL
         pvControlPc = Thread::VirtualUnwindCallFrame(&ctx, &nonVolRegPtrs);
 #else // !FEATURE_PAL
+        
+#if defined(DACCESS_COMPILE)
+        HRESULT hr = DacVirtualUnwind(threadId, &ctx, &nonVolRegPtrs);
+        if (FAILED(hr))
+        {
+            DacError(hr);
+        }
+#else
         PAL_VirtualUnwind(&ctx, &nonVolRegPtrs);
+#endif  // DACCESS_COMPILE    
+
         pvControlPc = GetIP(&ctx);
 #endif // !FEATURE_PAL
 

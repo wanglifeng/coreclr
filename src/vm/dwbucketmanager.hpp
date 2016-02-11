@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // FILE: dwbucketmanager.hpp
 //
@@ -486,7 +485,7 @@ void BaseBucketParamsManager::GetAppName(__out_ecount(maxLength) WCHAR* targetPa
     CONTRACTL_END;
 
     HMODULE hModule = WszGetModuleHandle(NULL);
-    WCHAR appPath[MAX_PATH];
+    WCHAR appPath[MAX_LONGPATH];
     DWORD cchAppPath = NumItems(appPath);
 
     if (GetCurrentModuleFileName(appPath, &cchAppPath) == S_OK)
@@ -510,10 +509,10 @@ void BaseBucketParamsManager::GetAppVersion(__out_ecount(maxLength) WCHAR* targe
     CONTRACTL_END;
 
     HMODULE hModule = WszGetModuleHandle(NULL);
-    WCHAR appPath[MAX_PATH];
+    WCHAR appPath[MAX_LONGPATH];
     DWORD cchAppPath = NumItems(appPath);
 
-    WCHAR verBuf[23];
+    WCHAR verBuf[23] = {0};
     USHORT major, minor, build, revision;
 
     if ((GetCurrentModuleFileName(appPath, &cchAppPath) == S_OK) && SUCCEEDED(DwGetFileVersionInfo(appPath, major, minor, build, revision)))

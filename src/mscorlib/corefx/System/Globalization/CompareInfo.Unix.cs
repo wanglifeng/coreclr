@@ -1,223 +1,297 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System.Diagnostics.Contracts;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Security;
 
 namespace System.Globalization
 {
     public partial class CompareInfo
-    {      
-        internal unsafe CompareInfo(CultureInfo culture)
+    {
+        [SecurityCritical]
+        private readonly Interop.GlobalizationInterop.SafeSortHandle m_sortHandle;
+
+        private readonly bool m_isAsciiEqualityOrdinal;
+
+        [SecuritySafeCritical]
+        internal CompareInfo(CultureInfo culture)
         {
-            // TODO: Implement This Fully.
+            m_name = culture.m_name;
+            m_sortName = culture.SortName;
+            m_sortHandle = Interop.GlobalizationInterop.GetSortHandle(System.Text.Encoding.UTF8.GetBytes(m_sortName));
+            m_isAsciiEqualityOrdinal = (m_sortName == "en-US" || m_sortName == "");
         }
 
-        internal static int IndexOfOrdinal(string source, string value, int startIndex, int count, bool ignoreCase)
+        [SecurityCritical]
+        internal static unsafe int IndexOfOrdinal(string source, string value, int startIndex, int count, bool ignoreCase)
         {
             Contract.Assert(source != null);
             Contract.Assert(value != null);
-
-            // TODO: Implement This Fully.
 
             if (value.Length == 0)
             {
                 return startIndex;
             }
 
-            if (ignoreCase)
+            if (count < value.Length)
             {
-                source = source.ToUpper(CultureInfo.InvariantCulture);
-                value = value.ToUpper(CultureInfo.InvariantCulture);
+                return -1;
             }
 
-            source = source.Substring(startIndex, count);
-
-            for (int i = 0; i + value.Length <= source.Length; i++)
+            if (ignoreCase)
             {
-                for (int j = 0; j < value.Length; j++) {
-                   if (source[i + j] != value[j]) {
-                       break;
-                   }
+                fixed (char* pSource = source)
+                {
+                    int index = Interop.GlobalizationInterop.IndexOfOrdinalIgnoreCase(value, value.Length, pSource + startIndex, count, findLast: false);
+                    return index != -1 ?
+                        startIndex + index :
+                        -1;
+                }
+            }
 
-                   if (j == value.Length - 1) {
-                       return i + startIndex;
-                   }
+            int endIndex = startIndex + (count - value.Length);
+            for (int i = startIndex; i <= endIndex; i++)
+            {
+                int valueIndex, sourceIndex;
+
+                for (valueIndex = 0, sourceIndex = i;
+                     valueIndex < value.Length && source[sourceIndex] == value[valueIndex];
+                     valueIndex++, sourceIndex++) ;
+
+                if (valueIndex == value.Length)
+                {
+                    return i;
                 }
             }
 
             return -1;
         }
 
-        internal static int LastIndexOfOrdinal(string source, string value, int startIndex, int count, bool ignoreCase)
+        [SecurityCritical]
+        internal static unsafe int LastIndexOfOrdinal(string source, string value, int startIndex, int count, bool ignoreCase)
         {
             Contract.Assert(source != null);
             Contract.Assert(value != null);
-
-            // TODO: Implement This Fully.
 
             if (value.Length == 0)
             {
                 return startIndex;
             }
 
+            if (count < value.Length)
+            {
+                return -1;
+            }
+
+            // startIndex is the index into source where we start search backwards from. 
+            // leftStartIndex is the index into source of the start of the string that is 
+            // count characters away from startIndex.
+            int leftStartIndex = startIndex - count + 1;
+
             if (ignoreCase)
             {
-                source = source.ToUpper(CultureInfo.InvariantCulture);
-                value = value.ToUpper(CultureInfo.InvariantCulture);
+                fixed (char* pSource = source)
+                {
+                    int lastIndex = Interop.GlobalizationInterop.IndexOfOrdinalIgnoreCase(value, value.Length, pSource + leftStartIndex, count, findLast: true);
+                    return lastIndex != -1 ?
+                        leftStartIndex + lastIndex :
+                        -1;
+                }
             }
 
-            source = source.Substring(startIndex - count + 1, count);
-
-            int last = -1;
-
-            int cur = 0;
-            while ((cur = IndexOfOrdinal(source, value, last + 1, source.Length - last - 1, false)) != -1)
+            for (int i = startIndex - value.Length + 1; i >= leftStartIndex; i--)
             {
-                last = cur;
+                int valueIndex, sourceIndex;
+
+                for (valueIndex = 0, sourceIndex = i;
+                     valueIndex < value.Length && source[sourceIndex] == value[valueIndex];
+                     valueIndex++, sourceIndex++) ;
+
+                if (valueIndex == value.Length) {
+                    return i;
+                }
             }
 
-            return last >= 0 ? 
-                last + startIndex - count + 1 : 
-                -1;
+            return -1;
         }
 
-        private unsafe int GetHashCodeOfStringCore(string source, CompareOptions options)
+        private int GetHashCodeOfStringCore(string source, CompareOptions options)
         {
             Contract.Assert(source != null);
             Contract.Assert((options & (CompareOptions.Ordinal | CompareOptions.OrdinalIgnoreCase)) == 0);
 
-            // TODO: Implement This Fully.
-            int hash = 5381;
-
-            unchecked
-            {
-                for (int i = 0; i < source.Length; i++)
-                {
-                    hash = ((hash << 5) + hash) + TextInfo.ChangeCaseAscii(source[i]);
-                }
-            }
-
-            return hash;
+            return GetHashCodeOfStringCore(source, options, forceRandomizedHashing: false, additionalEntropy: 0);
         }
 
-        [System.Security.SecuritySafeCritical]
+        [SecurityCritical]
         private static unsafe int CompareStringOrdinalIgnoreCase(char* string1, int count1, char* string2, int count2)
         {
-            // TODO: Implement This Fully.            
-            return CompareStringOrdinalAscii(string1, count1, string2, count2, ignoreCase: true);
+            return Interop.GlobalizationInterop.CompareStringOrdinalIgnoreCase(string1, count1, string2, count2);
         }
 
-        [System.Security.SecuritySafeCritical]
+        [SecurityCritical]
         private unsafe int CompareString(string string1, int offset1, int length1, string string2, int offset2, int length2, CompareOptions options)
         {
             Contract.Assert(string1 != null);
             Contract.Assert(string2 != null);
             Contract.Assert((options & (CompareOptions.Ordinal | CompareOptions.OrdinalIgnoreCase)) == 0);
 
-            // TODO: Implement This Fully.
-            string s1 = string1.Substring(offset1, length1);
-            string s2 = string2.Substring(offset2, length2);
-
-            fixed (char* c1 = s1)
+            fixed (char* pString1 = string1)
             {
-                fixed (char* c2 = s2)
+                fixed (char* pString2 = string2)
                 {
-                    return CompareStringOrdinalAscii(c1, s1.Length, c2, s2.Length, IgnoreCase(options));
+                    return Interop.GlobalizationInterop.CompareString(m_sortHandle, pString1 + offset1, length1, pString2 + offset2, length2, options);
                 }
             }
         }
 
-        private int IndexOfCore(string source, string target, int startIndex, int count, CompareOptions options)
+        [SecurityCritical]
+        private unsafe int IndexOfCore(string source, string target, int startIndex, int count, CompareOptions options)
         {
             Contract.Assert(!string.IsNullOrEmpty(source));
             Contract.Assert(target != null);
             Contract.Assert((options & CompareOptions.OrdinalIgnoreCase) == 0);
 
-            // TODO: Implement This Fully.
-            return IndexOfOrdinal(source, target, startIndex, count, IgnoreCase(options));
+            if (target.Length == 0)
+            {
+                return startIndex;
+            }
+
+            if (options == CompareOptions.Ordinal)
+            {
+                return IndexOfOrdinal(source, target, startIndex, count, ignoreCase: false);
+            }
+
+            if (m_isAsciiEqualityOrdinal && CanUseAsciiOrdinalForOptions(options) && source.IsAscii() && target.IsAscii())
+            {
+                return IndexOf(source, target, startIndex, count, GetOrdinalCompareOptions(options));
+            }
+
+            fixed (char* pSource = source)
+            {
+                int index = Interop.GlobalizationInterop.IndexOf(m_sortHandle, target, target.Length, pSource + startIndex, count, options);
+
+                return index != -1 ? index + startIndex : -1;
+            }
         }
 
-        private int LastIndexOfCore(string source, string target, int startIndex, int count, CompareOptions options)
+        [SecurityCritical]
+        private unsafe int LastIndexOfCore(string source, string target, int startIndex, int count, CompareOptions options)
         {
             Contract.Assert(!string.IsNullOrEmpty(source));
             Contract.Assert(target != null);
             Contract.Assert((options & CompareOptions.OrdinalIgnoreCase) == 0);
 
-            // TODO: Implement This Fully.
-            return LastIndexOfOrdinal(source, target, startIndex, count, IgnoreCase(options));
+            if (target.Length == 0)
+            {
+                return startIndex;
+            }
+
+            if (options == CompareOptions.Ordinal)
+            {
+                return LastIndexOfOrdinal(source, target, startIndex, count, ignoreCase: false);
+            }
+
+            if (m_isAsciiEqualityOrdinal && CanUseAsciiOrdinalForOptions(options) && source.IsAscii() && target.IsAscii())
+            {
+                return LastIndexOf(source, target, startIndex, count, GetOrdinalCompareOptions(options));
+            }
+
+            // startIndex is the index into source where we start search backwards from. leftStartIndex is the index into source
+            // of the start of the string that is count characters away from startIndex.
+            int leftStartIndex = (startIndex - count + 1);
+
+            fixed (char* pSource = source)
+            {
+                int lastIndex = Interop.GlobalizationInterop.LastIndexOf(m_sortHandle, target, target.Length, pSource + (startIndex - count + 1), count, options);
+
+                return lastIndex != -1 ? lastIndex + leftStartIndex : -1;
+            }
         }
 
+        [SecuritySafeCritical]
         private bool StartsWith(string source, string prefix, CompareOptions options)
         {
             Contract.Assert(!string.IsNullOrEmpty(source));
             Contract.Assert(!string.IsNullOrEmpty(prefix));
             Contract.Assert((options & (CompareOptions.Ordinal | CompareOptions.OrdinalIgnoreCase)) == 0);
 
-            // TODO: Implement This Fully.
-            if(prefix.Length > source.Length) return false;
+            if (m_isAsciiEqualityOrdinal && CanUseAsciiOrdinalForOptions(options) && source.IsAscii() && prefix.IsAscii())
+            {
+                return IsPrefix(source, prefix, GetOrdinalCompareOptions(options));
+            }
 
-            return StringEqualsAscii(source.Substring(0, prefix.Length), prefix, IgnoreCase(options));
+            return Interop.GlobalizationInterop.StartsWith(m_sortHandle, prefix, prefix.Length, source, source.Length, options);
         }
 
+        [SecuritySafeCritical]
         private bool EndsWith(string source, string suffix, CompareOptions options)
         {
             Contract.Assert(!string.IsNullOrEmpty(source));
             Contract.Assert(!string.IsNullOrEmpty(suffix));
             Contract.Assert((options & (CompareOptions.Ordinal | CompareOptions.OrdinalIgnoreCase)) == 0);
 
-            // TODO: Implement This Fully.
-            if(suffix.Length > source.Length) return false;
-
-            return StringEqualsAscii(source.Substring(source.Length - suffix.Length), suffix, IgnoreCase(options));
-        }
-
-        // PAL ends here
-
-        private static bool StringEqualsAscii(string s1, string s2, bool ignoreCase = true)
-        {
-            if (s1.Length != s2.Length) return false;
-
-            for (int i = 0; i < s1.Length; i++)
+            if (m_isAsciiEqualityOrdinal && CanUseAsciiOrdinalForOptions(options) && source.IsAscii() && suffix.IsAscii())
             {
-                char c1 = ignoreCase ? TextInfo.ChangeCaseAscii(s1[i]) : s1[i];
-                char c2 = ignoreCase ? TextInfo.ChangeCaseAscii(s2[i]) : s2[i];
-
-                if (c1 != c2) return false;
+                return IsSuffix(source, suffix, GetOrdinalCompareOptions(options));
             }
 
-            return true;
+            return Interop.GlobalizationInterop.EndsWith(m_sortHandle, suffix, suffix.Length, source, source.Length, options);
         }
 
-        [System.Security.SecuritySafeCritical]
-        private static unsafe int CompareStringOrdinalAscii(char* s1, int count1, char* s2, int count2, bool ignoreCase)
-        {
-            int countMin = Math.Min(count1, count2);
-            {
-                for (int i = 0; i < countMin; i++)
-                {
-                    char c1 = ignoreCase ? TextInfo.ChangeCaseAscii(s1[i]) : s1[i];
-                    char c2 = ignoreCase ? TextInfo.ChangeCaseAscii(s2[i]) : s2[i];
+        // -----------------------------
+        // ---- PAL layer ends here ----
+        // -----------------------------
 
-                    if (c1 < c2)
-                    {
-                        return -1;
-                    }
-                    else if (c1 > c2)
-                    {
-                        return 1;
-                    }
-                }
+        [SecuritySafeCritical]
+        internal unsafe int GetHashCodeOfStringCore(string source, CompareOptions options, bool forceRandomizedHashing, long additionalEntropy)
+        {
+            Contract.Assert(source != null);
+            Contract.Assert((options & (CompareOptions.Ordinal | CompareOptions.OrdinalIgnoreCase)) == 0);
+
+            int sortKeyLength = Interop.GlobalizationInterop.GetSortKey(m_sortHandle, source, source.Length, null, 0, options);
+
+            // As an optimization, for small sort keys we allocate the buffer on the stack.
+            if (sortKeyLength <= 256)
+            {
+                byte* pSortKey = stackalloc byte[sortKeyLength];
+                Interop.GlobalizationInterop.GetSortKey(m_sortHandle, source, source.Length, pSortKey, sortKeyLength, options);
+                return InternalHashSortKey(pSortKey, sortKeyLength, false, additionalEntropy);
             }
 
-            if (count1 == count2) return 0;
-            if (count1 > count2) return 1;
+            byte[] sortKey = new byte[sortKeyLength];
 
-            return -1;
+            fixed(byte* pSortKey = sortKey)
+            {
+                Interop.GlobalizationInterop.GetSortKey(m_sortHandle, source, source.Length, pSortKey, sortKeyLength, options);
+                return InternalHashSortKey(pSortKey, sortKeyLength, false, additionalEntropy);
+            }
         }
 
-        private static bool IgnoreCase(CompareOptions options)
+        [SecurityCritical]
+        [DllImport(JitHelpers.QCall)]
+        [SuppressUnmanagedCodeSecurity]
+        private static unsafe extern int InternalHashSortKey(byte* sortKey, int sortKeyLength, [MarshalAs(UnmanagedType.Bool)] bool forceRandomizedHashing, long additionalEntropy);
+
+        private static CompareOptions GetOrdinalCompareOptions(CompareOptions options)
         {
-            return ((options & CompareOptions.IgnoreCase) == CompareOptions.IgnoreCase);
+            if ((options & CompareOptions.IgnoreCase) == CompareOptions.IgnoreCase)
+            {
+                return CompareOptions.OrdinalIgnoreCase;
+            }
+            else
+            {
+                return CompareOptions.Ordinal;
+            }
+        }
+
+        private static bool CanUseAsciiOrdinalForOptions(CompareOptions options)
+        {
+            // Unlike the other Ignore options, IgnoreSymbols impacts ASCII characters (e.g. ').
+            return (options & CompareOptions.IgnoreSymbols) == 0;
         }
     }
 }

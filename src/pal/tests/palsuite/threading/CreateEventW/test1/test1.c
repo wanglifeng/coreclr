@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -29,18 +28,16 @@ BOOL CreateEventTest()
     LPSECURITY_ATTRIBUTES lpEventAttributes = NULL;
     BOOL bManualReset = TRUE; 
     BOOL bInitialState = TRUE;
-    WCHAR TheName[] = {'E','v','e','n','t','\0'};
-    LPWSTR lpName = TheName;
 
     /* 
      * Call CreateEvent, and check to ensure the returned HANDLE is a
      * valid event HANDLE
     */
     
-    HANDLE hEvent = CreateEvent( lpEventAttributes, 
+    HANDLE hEvent = CreateEventW(lpEventAttributes, 
                                  bManualReset, 
                                  bInitialState, 
-                                 lpName); 
+                                 NULL); 
  
     if (hEvent != NULL)
     {
@@ -52,8 +49,7 @@ BOOL CreateEventTest()
 
         if (dwRet != WAIT_OBJECT_0)
         {
-            Trace("CreateEventTest:WaitForSingleObject %s "
-                   "failed (%x)\n",lpName,GetLastError());
+            Trace("CreateEventTest:WaitForSingleObject failed (%x)\n", GetLastError());
         }
         else
         {
@@ -66,15 +62,13 @@ BOOL CreateEventTest()
 
             if (!bRet)
             {
-                Trace("CreateEventTest:CloseHandle %s "
-                       "failed (%x)\n",lpName,GetLastError());
+                Trace("CreateEventTest:CloseHandle failed (%x)\n", GetLastError());
             }           
         }
     }
     else
     {
-        Trace("CreateEventTest:CreateEvent %s "
-               "failed (%x)\n",lpName,GetLastError());
+        Trace("CreateEventTest:CreateEvent failed (%x)\n", GetLastError());
     }
     
     return bRet;

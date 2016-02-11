@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: compile.h
 //
@@ -115,9 +114,7 @@ CEEPreloader::AddFixup, which forwards it to the zapper
 #ifndef COMPILE_H_
 #define COMPILE_H_
 
-#ifndef FEATURE_PREJIT
-#error FEATURE_PREJIT is required for this file
-#endif // FEATURE_PREJIT
+#ifdef FEATURE_NATIVE_IMAGE_GENERATION
 
 struct ZapperLoaderModuleTableKey {
     ZapperLoaderModuleTableKey(Module *pDefinitionModule, 
@@ -183,6 +180,11 @@ typedef  SHash<ZapperLoaderModuleTableTraits> ZapperLoaderModuleTable;
 class CEECompileInfo : public ICorCompileInfo
 {
   public:
+    virtual ~CEECompileInfo()
+    {
+        WRAPPER_NO_CONTRACT;
+    }
+    
     HRESULT Startup(     BOOL                     fForceDebug, 
                          BOOL                     fForceProfiling,
                          BOOL                     fForceInstrument);
@@ -325,6 +327,8 @@ class CEECompileInfo : public ICorCompileInfo
     BOOL IsEmptyString(mdString token,
                        CORINFO_MODULE_HANDLE module);
 
+    BOOL IsNativeCallableMethod(CORINFO_METHOD_HANDLE handle);
+
     BOOL IsCachingOfInliningHintsEnabled()
     {
         return m_fCachingOfInliningHintsEnabled;
@@ -418,6 +422,8 @@ class CEECompileInfo : public ICorCompileInfo
 
     BOOL AreAllClassesFullyLoaded(CORINFO_MODULE_HANDLE moduleHandle);
 #endif
+
+    BOOL HasCustomAttribute(CORINFO_METHOD_HANDLE method, LPCSTR customAttributeName);
 
     //--------------------------------------------------------------------
     // ZapperLoaderModules and the ZapperLoaderModuleTable
@@ -571,7 +577,7 @@ class CEEPreloader : public ICorCompilePreloader
   public:
     CEEPreloader(Module *pModule,
                  ICorCompileDataStore *pData);
-    ~CEEPreloader();
+    virtual ~CEEPreloader();
 
     void Preload(CorProfileData * profileData);
     DataImage * GetDataImage() { LIMITED_METHOD_CONTRACT; return m_image; }
@@ -915,5 +921,7 @@ class CompilationDomain : public AppDomain,
 
     void SetDependencyEmitter(IMetaDataAssemblyEmit *pEmitter);
 };
+
+#endif // FEATURE_NATIVE_IMAGE_GENERATION
 
 #endif // COMPILE_H_

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -123,18 +122,54 @@ bool TwoWayPipe::WaitForConnection()
 
 // Reads data from pipe. Returns number of bytes read or a negative number in case of an error.
 // use GetLastError() for more details
+// UNIXTODO - mjm 9/6/15 - does not set last error on failure
 int TwoWayPipe::Read(void *buffer, DWORD bufferSize)
 {
     _ASSERTE(m_state == ServerConnected || m_state == ClientConnected);
-    return (int)read(m_inboundPipe, buffer, bufferSize);
+
+    int totalBytesRead = 0;
+    int bytesRead;
+    int cb = bufferSize;
+
+    while ((bytesRead = (int)read(m_inboundPipe, buffer, cb)) > 0)
+    {
+        totalBytesRead += bytesRead;
+        _ASSERTE(totalBytesRead <= bufferSize);
+        if (totalBytesRead >= bufferSize)
+        {
+            break;
+        }
+        buffer = (char*)buffer + bytesRead;
+        cb -= bytesRead;
+    }
+
+    return bytesRead == -1 ? -1 : totalBytesRead;
 }
 
 // Writes data to pipe. Returns number of bytes written or a negative number in case of an error.
 // use GetLastError() for more details
+// UNIXTODO - mjm 9/6/15 - does not set last error on failure
 int TwoWayPipe::Write(const void *data, DWORD dataSize)
 {
     _ASSERTE(m_state == ServerConnected || m_state == ClientConnected);
-    return (int)write(m_outboundPipe, data, dataSize);
+
+    int totalBytesWritten = 0;
+    int bytesWritten;
+    int cb = dataSize;
+
+    while ((bytesWritten = (int)write(m_outboundPipe, data, cb)) > 0)
+    {
+        totalBytesWritten += bytesWritten;
+        _ASSERTE(totalBytesWritten <= dataSize);
+        if (totalBytesWritten >= dataSize)
+        {
+            break;
+        }
+        data = (char*)data + bytesWritten;
+        cb -= bytesWritten;
+    }
+
+    return bytesWritten == -1 ? -1 : totalBytesWritten;
 }
 
 // Disconnect server or client side of the pipe.
@@ -142,13 +177,13 @@ int TwoWayPipe::Write(const void *data, DWORD dataSize)
 bool TwoWayPipe::Disconnect()
 {
 
-    if (m_outboundPipe != INVALID_PIPE)
+    if (m_outboundPipe != INVALID_PIPE && m_outboundPipe != 0)
     {
         close(m_outboundPipe);
         m_outboundPipe = INVALID_PIPE;
     }
 
-    if (m_inboundPipe != INVALID_PIPE)
+    if (m_inboundPipe != INVALID_PIPE && m_inboundPipe != 0)
     {
         close(m_inboundPipe);
         m_inboundPipe = INVALID_PIPE;

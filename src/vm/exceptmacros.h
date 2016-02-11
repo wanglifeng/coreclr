@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -323,19 +322,46 @@ VOID DECLSPEC_NORETURN UnwindAndContinueRethrowHelperAfterCatch(Frame* pEntryFra
 VOID DECLSPEC_NORETURN DispatchManagedException(PAL_SEHException& ex);
 
 #define INSTALL_MANAGED_EXCEPTION_DISPATCHER        \
-        try { \
+        PAL_SEHException exCopy;                    \
+        bool hasCaughtException = false;            \
+        try {
 
 #define UNINSTALL_MANAGED_EXCEPTION_DISPATCHER      \
         }                                           \
         catch (PAL_SEHException& ex)                \
         {                                           \
-            DispatchManagedException(ex);           \
+            exCopy = ex;                            \
+            hasCaughtException = true;              \
         }                                           \
+        if (hasCaughtException)                     \
+        {                                           \
+            DispatchManagedException(exCopy);       \
+        }
+
+// Install trap that catches unhandled managed exception and dumps its stack
+#define INSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP                                            \
+        try {                                                                                   
+
+// Uninstall trap that catches unhandled managed exception and dumps its stack
+#define UNINSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP                                          \
+        }                                                                                   \
+        catch (PAL_SEHException& ex)                                                        \
+        {                                                                                   \
+            DefaultCatchHandler(NULL /*pExceptionInfo*/,                                    \
+                                NULL /*Throwable*/,                                         \
+                                TRUE /*useLastThrownObject*/,                               \
+                                TRUE /*isTerminating*/,                                     \
+                                FALSE /*isThreadBaseFIlter*/,                               \
+                                FALSE /*sendAppDomainEvents*/);                             \
+            EEPOLICY_HANDLE_FATAL_ERROR(COR_E_EXECUTIONENGINE);                             \
+        }
 
 #else
 
 #define INSTALL_MANAGED_EXCEPTION_DISPATCHER
 #define UNINSTALL_MANAGED_EXCEPTION_DISPATCHER
+#define INSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP
+#define UNINSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP
 
 #endif // FEATURE_PAL
 
@@ -345,7 +371,6 @@ VOID DECLSPEC_NORETURN DispatchManagedException(PAL_SEHException& ex);
         Exception* __pUnCException  = NULL;                                                 \
         Frame*     __pUnCEntryFrame = CURRENT_THREAD->GetFrame();                           \
         bool       __fExceptionCatched = false;                                             \
-        INSTALL_MANAGED_EXCEPTION_DISPATCHER                                                \
         SCAN_EHMARKER();                                                                    \
         if (true) PAL_CPP_TRY {                                                             \
             SCAN_EHMARKER_TRY();                                                            \
@@ -368,7 +393,6 @@ VOID DECLSPEC_NORETURN DispatchManagedException(PAL_SEHException& ex);
         Exception* __pUnCException  = NULL;                                                 \
         Frame*     __pUnCEntryFrame = (pHelperFrame);                                       \
         bool       __fExceptionCatched = false;                                             \
-        INSTALL_MANAGED_EXCEPTION_DISPATCHER                                                \
         SCAN_EHMARKER();                                                                    \
         if (true) PAL_CPP_TRY {                                                             \
             SCAN_EHMARKER_TRY();                                                            \
@@ -394,7 +418,6 @@ VOID DECLSPEC_NORETURN DispatchManagedException(PAL_SEHException& ex);
             SCAN_EHMARKER_CATCH();                                                          \
             UnwindAndContinueRethrowHelperAfterCatch(__pUnCEntryFrame, __pUnCException);    \
         }                                                                                   \
-        UNINSTALL_MANAGED_EXCEPTION_DISPATCHER                                              \
     }                                                                                       \
 
 #define UNINSTALL_UNWIND_AND_CONTINUE_HANDLER                                               \

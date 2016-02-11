@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -30,15 +29,13 @@ DWORD SleepTimes[] =
     3200000
 };
 
-/* Milliseconds of error which are acceptable Function execution time, etc.
-   FreeBSD has a "standard" resolution of 10ms for waiting operations, so we 
-   must take that into account as well */
-DWORD AcceptableTimeError = 150; 
+/* Milliseconds of error which are acceptable Function execution time, etc. */
+DWORD AcceptableTimeError = 150;
 
 int __cdecl main( int argc, char **argv ) 
 {
-    DWORD OldTickCount;
-    DWORD NewTickCount;
+    UINT64 OldTimeStamp;
+    UINT64 NewTimeStamp;
     DWORD MaxDelta;
     DWORD TimeDelta;
     DWORD i;
@@ -48,21 +45,19 @@ int __cdecl main( int argc, char **argv )
         return ( FAIL );
     }
 
+    LARGE_INTEGER performanceFrequency;
+    if (!QueryPerformanceFrequency(&performanceFrequency))
+    {
+        return FAIL;
+    }
+
     for( i = 0; i < sizeof(SleepTimes) / sizeof(DWORD); i++)
     {
-        OldTickCount = GetTickCount();
+        OldTimeStamp = GetHighPrecisionTimeStamp(performanceFrequency);
         Sleep(SleepTimes[i]);
-        NewTickCount = GetTickCount();
+        NewTimeStamp = GetHighPrecisionTimeStamp(performanceFrequency);
 
-        /* 
-         * Check for DWORD wraparound
-         */
-        if (OldTickCount>NewTickCount)
-        {
-            OldTickCount -= NewTickCount+1;
-            NewTickCount  = 0xFFFFFFFF;
-        }
-        TimeDelta = NewTickCount-OldTickCount;
+        TimeDelta = NewTimeStamp - OldTimeStamp;
 
         MaxDelta = SleepTimes[i] + AcceptableTimeError;
 

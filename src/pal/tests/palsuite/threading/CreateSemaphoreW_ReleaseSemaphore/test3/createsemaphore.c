@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================================
 **
@@ -38,7 +37,9 @@ struct testcase testCases[] =
     {NULL, -1, -1, NULL, TRUE},
     {NULL, 2, 1, NULL, TRUE},
     {NULL, 1, 2, NULL, FALSE},
-    {NULL, 0, 10, NULL, FALSE}
+    {NULL, 0, 10, NULL, FALSE},
+    {NULL, INT_MAX - 1, INT_MAX, NULL, FALSE},
+    {NULL, INT_MAX, INT_MAX, NULL, FALSE}
 };
 
 HANDLE hSemaphore[sizeof(testCases)/sizeof(struct testcase)];
@@ -96,8 +97,9 @@ int __cdecl main (int argc, char **argv)
                 continue;
             }
         }
-        /* incriment semaphore count to lMaximumCount */
-        for (j = testCases[i].lInitialCount; j <= testCases[i].lMaximumCount; 
+
+        /* increment semaphore count to lMaximumCount */
+        for (j = testCases[i].lInitialCount; (ULONG)j <= (ULONG)testCases[i].lMaximumCount; 
              j++)    
         {
             if (testCases[i].lMaximumCount == j)
@@ -144,6 +146,13 @@ int __cdecl main (int argc, char **argv)
                 }
             }
         }
+
+        // Skip exhaustive decrement tests for too large an initial count
+        if(testCases[i].lInitialCount >= INT_MAX - 1)
+        {
+            continue;
+        }
+
         /* decrement semaphore count to 0 */
         for (j = testCases[i].lMaximumCount; j >= 0; j--)    
         {

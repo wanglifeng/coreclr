@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: MultiCoreJIT.cpp
 //
@@ -28,6 +27,7 @@
 #include "appdomain.hpp"
 #include "qcall.h"
 
+#include "eventtracebase.h"
 #include "multicorejit.h"
 #include "multicorejitimpl.h"
 
@@ -96,7 +96,7 @@ void MulticoreJitFireEtwA(const wchar_t * pAction, const char * pTarget, int p1,
 #ifdef FEATURE_EVENT_TRACE
     EX_TRY
     {
-        if (McGenEventTracingEnabled(& MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_Context, & MulticoreJit))
+        if (EventEnabledMulticoreJit())
         {
             SString wTarget;
 

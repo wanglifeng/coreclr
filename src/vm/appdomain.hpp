@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -1093,6 +1092,7 @@ public:
     // Initialization/shutdown routines for every instance of an BaseDomain.
 
     BaseDomain();
+    virtual ~BaseDomain() {}
     void Init();
     void Stop();
     void Terminate();
@@ -1219,12 +1219,6 @@ public:
         return m_DomainLocalBlockCrst.OwnedByCurrentThread();
     }
 #endif
-
-    //****************************************************************************************
-    //
-
-    virtual IApplicationSecurityDescriptor* GetSecurityDescriptor() { LIMITED_METHOD_CONTRACT; return NULL; }
-
 
     //****************************************************************************************
     // Get the class init lock. The method is limited to friends because inappropriate use
@@ -1856,7 +1850,7 @@ struct FailedAssembly {
         CONTRACTL
         {
             THROWS;
-            GC_NOTRIGGER;
+            GC_TRIGGERS;
             MODE_ANY;
         }
         CONTRACTL_END;
@@ -4601,13 +4595,6 @@ public:
     // torn down using the normal sequence.
     static HRESULT NotifyProfilerShutdown();
 #endif // PROFILING_SUPPORTED
-
-    IApplicationSecurityDescriptor* GetSecurityDescriptor()
-    {
-        LIMITED_METHOD_CONTRACT;
-
-        return NULL;
-    }
 
     //****************************************************************************************
     // return the dev path

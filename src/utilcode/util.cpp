@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 //  util.cpp
 //
@@ -18,6 +17,7 @@
 #include "loaderheap.h"
 #include "sigparser.h"
 #include "cor.h"
+#include "corinfo.h"
 
 #ifndef FEATURE_CORECLR
 #include "metahost.h"
@@ -56,12 +56,12 @@ void InitWinRTStatus()
     const WCHAR wszComBaseDll[] = W("\\combase.dll");
     const SIZE_T cchComBaseDll = _countof(wszComBaseDll);
 
-    WCHAR wszComBasePath[MAX_PATH + 1];
+    WCHAR wszComBasePath[MAX_LONGPATH + 1];
     const SIZE_T cchComBasePath = _countof(wszComBasePath);
 
     ZeroMemory(wszComBasePath, cchComBasePath * sizeof(wszComBasePath[0]));
 
-    UINT cchSystemDirectory = WszGetSystemDirectory(wszComBasePath, MAX_PATH);
+    UINT cchSystemDirectory = WszGetSystemDirectory(wszComBasePath, MAX_LONGPATH);
 
     // Make sure that we're only probing in the system directory.  If we can't find the system directory, or
     // we find it but combase.dll doesn't fit into it, we'll fall back to a safe default of saying that WinRT
@@ -263,8 +263,8 @@ HRESULT FakeCoCreateInstanceEx(REFCLSID       rclsid,
     HRESULT hr = S_OK;
 
     // Call the function to get a class factory for the rclsid passed in.
-    ReleaseHolder<IClassFactory> classFactory;
     HModuleHolder hDll;
+    ReleaseHolder<IClassFactory> classFactory;
     IfFailRet(FakeCoCallDllGetClassObject(rclsid, wszDllPath, _IID_IClassFactory, (void**)&classFactory, &hDll));
 
     // Ask the class factory to create an instance of the
@@ -525,6 +525,13 @@ BYTE * ClrVirtualAllocExecutable(SIZE_T dwSize,
 
     // Fall through to 
 #endif // USE_UPPER_ADDRESS
+
+#ifdef FEATURE_PAL
+    // Tell PAL to use the executable memory allocator to satisfy this request for virtual memory.
+    // This will allow us to place JIT'ed code close to the coreclr library
+    // and thus improve performance by avoiding jump stubs in managed code.
+    flAllocationType |= MEM_RESERVE_EXECUTABLE;
+#endif // FEATURE_PAL
 
     return (BYTE *) ClrVirtualAlloc (NULL, dwSize, flAllocationType, flProtect);
 
@@ -1295,12 +1302,28 @@ bool ConfigMethodSet::contains(LPCUTF8 methodName, LPCUTF8 className, PCCOR_SIGN
         NOTHROW;
     }
     CONTRACTL_END;
-    
+
     _ASSERTE(m_inited == 1);
 
     if (m_list.IsEmpty())
         return false;
     return(m_list.IsInList(methodName, className, sig));
+}
+
+/**************************************************************************/
+bool ConfigMethodSet::contains(LPCUTF8 methodName, LPCUTF8 className, CORINFO_SIG_INFO* pSigInfo)
+{
+    CONTRACTL
+    {
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
+    _ASSERTE(m_inited == 1);
+
+    if (m_list.IsEmpty())
+        return false;
+    return(m_list.IsInList(methodName, className, pSigInfo));
 }
 
 /**************************************************************************/
@@ -1641,20 +1664,50 @@ bool MethodNamesListBase::IsInList(LPCUTF8 methName, LPCUTF8 clsName, PCCOR_SIGN
         NOTHROW;
     }
     CONTRACTL_END;
-    
-    ULONG numArgs = -1;
+
+    int numArgs = -1;
     if (sig != NULL)
     {
         sig++;      // Skip calling convention
         numArgs = CorSigUncompressData(sig);  
     }
 
+    return IsInList(methName, clsName, numArgs);
+}
+
+/**************************************************************/
+bool MethodNamesListBase::IsInList(LPCUTF8 methName, LPCUTF8 clsName, CORINFO_SIG_INFO* pSigInfo)
+{
+    CONTRACTL
+    {
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
+    int numArgs = -1;
+    if (pSigInfo != NULL)
+    {
+        numArgs = pSigInfo->numArgs;
+    }
+
+    return IsInList(methName, clsName, numArgs);
+}
+
+/**************************************************************/
+bool MethodNamesListBase::IsInList(LPCUTF8 methName, LPCUTF8 clsName, int numArgs) 
+{
+    CONTRACTL
+    {
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
     // Try to match all the entries in the list
 
     for(MethodName * pName = pNames; pName; pName = pName->next)
     {
         // If numArgs is valid, check for mismatch
-        if (pName->numArgs != -1 && (ULONG)pName->numArgs != numArgs)
+        if (pName->numArgs != -1 && pName->numArgs != numArgs)
             continue;
 
         // If methodName is valid, check for mismatch
@@ -2930,8 +2983,7 @@ void SOViolation(const char *szFunction, const char *szFile, int lineNum, SOViol
                         "\nPlease open a bug against the feature owner.\n"
                         "\nNOTE: You can disable this ASSERT by setting COMPLUS_SOEnableBackoutStackValidation=0.\n"
                         "\nFor details about this feature, see, in a CLR enlistment,\n"
-                        "src\\ndp\\clr\\doc\\OtherDevDocs\\untriaged\\clrdev_web\\SO Guide for CLR Developers.doc\n",
-                            szFunction, szFile, lineNum);
+                        "src\\ndp\\clr\\doc\\OtherDevDocs\\untriaged\\clrdev_web\\SO Guide for CLR Developers.doc\n");
     }
     else 
     {
@@ -3631,7 +3683,7 @@ namespace Util
                 DWORD cCharsNeeded;
                 cCharsNeeded = GetEnvironmentVariableW(W("LOCALAPPDATA"), NULL, 0);
 
-                if ((cCharsNeeded != 0) && (cCharsNeeded < MAX_PATH))
+                if ((cCharsNeeded != 0) && (cCharsNeeded < MAX_LONGPATH))
                 {
                     wszLocalAppData = new WCHAR[cCharsNeeded];
                     cCharsNeeded = GetEnvironmentVariableW(W("LOCALAPPDATA"), wszLocalAppData, cCharsNeeded);
@@ -3784,6 +3836,7 @@ namespace Com
 {
     namespace __imp
     {
+        __success(return == S_OK)
         static
         HRESULT FindSubKeyDefaultValueForCLSID(REFCLSID rclsid, LPCWSTR wszSubKeyName, SString & ssValue)
         {
@@ -3804,6 +3857,7 @@ namespace Com
             return Clr::Util::Reg::ReadStringValue(HKEY_CLASSES_ROOT, ssKeyName.GetUnicode(), NULL, ssValue);
         }
 
+        __success(return == S_OK)
         static
         HRESULT FindSubKeyDefaultValueForCLSID(REFCLSID rclsid, LPCWSTR wszSubKeyName, __deref_out __deref_out_z LPWSTR* pwszValue)
         {

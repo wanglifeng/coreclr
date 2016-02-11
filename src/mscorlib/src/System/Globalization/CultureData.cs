@@ -1,5 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 namespace System.Globalization
 {
@@ -1180,24 +1181,10 @@ namespace System.Globalization
                 if (this.sLocalizedDisplayName == null)
                 {
 #if !FEATURE_CORECLR
-                    if (this.IsSupplementalCustomCulture)
+                    String resourceKey = "Globalization.ci_" + this.sName;
+                    if (IsResourcePresent(resourceKey))
                     {
-                        if (this.IsNeutralCulture)
-                        {
-                            this.sLocalizedDisplayName = this.SNATIVELANGUAGE;
-                        }
-                        else
-                        {
-                            this.sLocalizedDisplayName = this.SNATIVEDISPLAYNAME;
-                        }
-                    }
-                    else
-                    {
-                        String resourceKey = "Globalization.ci_" + this.sName;
-                        if (IsResourcePresent(resourceKey))
-                        {
-                            this.sLocalizedDisplayName = Environment.GetResourceString(resourceKey);
-                        }
+                        this.sLocalizedDisplayName = Environment.GetResourceString(resourceKey);
                     }
 #endif
                     // If it hasn't been found (Windows 8 and up), fallback to the system
@@ -1518,17 +1505,10 @@ namespace System.Globalization
                 if (this.sLocalizedCountry == null)
                 {
 #if !FEATURE_CORECLR
-                    if (this.IsSupplementalCustomCulture)
+                    String resourceKey = "Globalization.ri_" + this.SREGIONNAME;
+                    if (IsResourcePresent(resourceKey))
                     {
-                        this.sLocalizedCountry = SNATIVECOUNTRY;
-                    }
-                    else
-                    {
-                        String resourceKey = "Globalization.ri_" + this.SREGIONNAME;
-                        if (IsResourcePresent(resourceKey))
-                        {
-                            this.sLocalizedCountry = Environment.GetResourceString(resourceKey);
-                        }
+                        this.sLocalizedCountry = Environment.GetResourceString(resourceKey);
                     }
 #endif
                     // If it hasn't been found (Windows 8 and up), fallback to the system

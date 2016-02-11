@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 class DebugClient : public IDebugClient
 {
@@ -9,15 +8,21 @@ private:
     lldb::SBDebugger &m_debugger;
     lldb::SBCommandReturnObject &m_returnObject;
 
+    lldb::SBProcess *m_currentProcess;
+    lldb::SBThread *m_currentThread;
+
     void OutputString(ULONG mask, PCSTR str);
+    ULONG64 GetModuleBase(lldb::SBTarget& target, lldb::SBModule& module);
+    DWORD_PTR GetExpression(lldb::SBFrame& frame, lldb::SBError& error, PCSTR exp);
+    void GetContextFromFrame(lldb::SBFrame& frame, DT_CONTEXT *dtcontext);
+    DWORD_PTR GetRegister(lldb::SBFrame& frame, const char *name);
+
     lldb::SBProcess GetCurrentProcess();
     lldb::SBThread GetCurrentThread();
     lldb::SBFrame GetCurrentFrame();
-    HRESULT GetModuleBase(lldb::SBTarget target, lldb::SBModule module, PULONG64 base);
-    HRESULT GetExpression(lldb::SBFrame frame, PCSTR exp, PDWORD_PTR result);
-    
+
 public:
-    DebugClient(lldb::SBDebugger &debugger, lldb::SBCommandReturnObject &returnObject);
+    DebugClient(lldb::SBDebugger &debugger, lldb::SBCommandReturnObject &returnObject, lldb::SBProcess *process = nullptr, lldb::SBThread *thread = nullptr);
     ~DebugClient();
 
     //----------------------------------------------------------------------------
@@ -56,7 +61,23 @@ public:
         PULONG size);
 
     HRESULT GetExecutingProcessorType(
-        PULONG Type);
+        PULONG type);
+
+    HRESULT Execute(
+        ULONG outputControl,
+        PCSTR command,
+        ULONG flags);
+
+    HRESULT GetLastEventInformation(
+        PULONG type,
+        PULONG processId,
+        PULONG threadId,
+        PVOID extraInformation,
+        ULONG extraInformationSize,
+        PULONG extraInformationUsed,
+        PSTR description,
+        ULONG descriptionSize,
+        PULONG descriptionUsed);
 
     //----------------------------------------------------------------------------
     // IDebugDataSpaces
@@ -121,9 +142,15 @@ public:
         ULONG loadedImageNameBufferSize,
         PULONG loadedImageNameSize);
 
+    PCSTR GetModuleDirectory(
+        PCSTR name);
+
     //----------------------------------------------------------------------------
     // IDebugSystemObjects
     //----------------------------------------------------------------------------
+
+    HRESULT GetCurrentProcessId(
+        PULONG id);
 
     HRESULT GetCurrentThreadId(
         PULONG id);
@@ -136,7 +163,13 @@ public:
 
     HRESULT GetThreadIdBySystemId(
         ULONG sysId,
-        PULONG id);
+        PULONG threadId);
+
+    HRESULT GetThreadContextById(
+        ULONG32 threadID,
+        ULONG32 contextFlags,
+        ULONG32 contextSize,
+        PBYTE context);
 
     //----------------------------------------------------------------------------
     // IDebugRegisters
@@ -159,13 +192,18 @@ public:
     // IDebugClient
     //----------------------------------------------------------------------------
 
-    HRESULT GetThreadContextById(
-        ULONG32 threadID,
-        ULONG32 contextFlags,
+    PCSTR GetCoreClrDirectory();
+
+    DWORD_PTR GetExpression(
+        PCSTR exp);
+
+    HRESULT VirtualUnwind(
+        DWORD threadID,
         ULONG32 contextSize,
         PBYTE context);
 
-    HRESULT GetExpression(
-        PCSTR exp,
-        PDWORD_PTR result);
+    HRESULT SetExceptionCallback(
+        PFN_EXCEPTION_CALLBACK callback);
+
+    HRESULT ClearExceptionCallback();
 };

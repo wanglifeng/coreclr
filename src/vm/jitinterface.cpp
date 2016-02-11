@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: JITinterface.CPP
 //
@@ -58,7 +57,6 @@
 #include "runtimehandles.h"
 #include "sigbuilder.h"
 #include "openum.h"
-
 #ifdef HAVE_GCCOVER
 #include "gccover.h"
 #endif // HAVE_GCCOVER
@@ -1651,7 +1649,6 @@ void CEEInfo::getFieldInfo (CORINFO_RESOLVED_TOKEN * pResolvedToken,
     DWORD fieldFlags = 0;
 
     pResult->offset = pField->GetOffset();
-
     if (pField->IsStatic())
     {
 #ifdef FEATURE_LEGACYNETCF
@@ -1850,7 +1847,6 @@ void CEEInfo::getFieldInfo (CORINFO_RESOLVED_TOKEN * pResolvedToken,
 
     if (!(flags & CORINFO_ACCESS_INLINECHECK))
     {
-
     //get the field's type.  Grab the class for structs.
     pResult->fieldType = getFieldTypeInternal(pResolvedToken->hField, &pResult->structType, pResolvedToken->hClass);
 
@@ -2562,6 +2558,87 @@ unsigned CEEInfo::getClassGClayout (CORINFO_CLASS_HANDLE clsHnd, BYTE* gcPtrs)
 
     return result;
 }
+
+// returns the enregister info for a struct based on type of fields, alignment, etc.
+bool CEEInfo::getSystemVAmd64PassStructInRegisterDescriptor(
+                                                /*IN*/  CORINFO_CLASS_HANDLE structHnd,
+                                                /*OUT*/ SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR* structPassInRegDescPtr)
+{
+    CONTRACTL {
+        SO_TOLERANT;
+        THROWS;
+        GC_TRIGGERS;
+        MODE_PREEMPTIVE;
+    } CONTRACTL_END;
+
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING_ITF)
+    JIT_TO_EE_TRANSITION();
+
+    _ASSERTE(structPassInRegDescPtr != nullptr);
+    TypeHandle th(structHnd);
+
+    structPassInRegDescPtr->passedInRegisters = false;
+    
+    // Make sure this is a value type.
+    if (th.IsValueType())
+    {
+        _ASSERTE((CorInfoType2UnixAmd64Classification(th.GetInternalCorElementType()) == SystemVClassificationTypeStruct) ||
+                 (CorInfoType2UnixAmd64Classification(th.GetInternalCorElementType()) == SystemVClassificationTypeTypedReference));
+
+        // The useNativeLayout in this case tracks whether the classification
+        // is for a native layout of the struct or not.
+        // If the struct has special marshaling it has a native layout. 
+        // In such cases the classifier needs to use the native layout.
+        // For structs with no native layout, the managed layout should be used
+        // even if classified for the purposes of marshaling/PInvoke passing.
+        bool useNativeLayout = false;
+        MethodTable* methodTablePtr = nullptr;
+        if (!th.IsTypeDesc())
+        {
+            methodTablePtr = th.AsMethodTable();
+        }
+        else
+        {
+            _ASSERTE(th.IsNativeValueType());
+
+            useNativeLayout = true;
+            methodTablePtr = th.AsNativeValueType();
+        }
+        _ASSERTE(methodTablePtr != nullptr);
+
+        bool canPassInRegisters = useNativeLayout ? methodTablePtr->GetLayoutInfo()->IsNativeStructPassedInRegisters()
+                                                : methodTablePtr->IsRegPassedStruct();
+        if (canPassInRegisters)
+        {
+            SystemVStructRegisterPassingHelper helper((unsigned int)th.GetSize());
+            bool result = methodTablePtr->ClassifyEightBytes(&helper, 0, 0, useNativeLayout);
+
+            // The answer must be true at this point.
+            _ASSERTE(result);
+            structPassInRegDescPtr->passedInRegisters = true;
+
+            structPassInRegDescPtr->eightByteCount = helper.eightByteCount;
+            _ASSERTE(structPassInRegDescPtr->eightByteCount <= CLR_SYSTEMV_MAX_EIGHTBYTES_COUNT_TO_PASS_IN_REGISTERS);
+
+            for (unsigned int i = 0; i < CLR_SYSTEMV_MAX_EIGHTBYTES_COUNT_TO_PASS_IN_REGISTERS; i++)
+            {
+                structPassInRegDescPtr->eightByteClassifications[i] = helper.eightByteClassifications[i];
+                structPassInRegDescPtr->eightByteSizes[i] = helper.eightByteSizes[i];
+                structPassInRegDescPtr->eightByteOffsets[i] = helper.eightByteOffsets[i];
+            }
+        }
+
+        _ASSERTE(structPassInRegDescPtr->passedInRegisters == canPassInRegisters);
+    }
+
+    EE_TO_JIT_TRANSITION();
+
+    return true;
+#else // !defined(FEATURE_UNIX_AMD64_STRUCT_PASSING_ITF)
+    return false;
+#endif // !defined(FEATURE_UNIX_AMD64_STRUCT_PASSING_ITF)
+}
+
 /*********************************************************************/
 unsigned CEEInfo::getClassNumInstanceFields (CORINFO_CLASS_HANDLE clsHnd)
 {
@@ -3252,7 +3329,7 @@ void CEEInfo::ComputeRuntimeLookupForSharedGenericToken(DictionaryEntryKind entr
 
     BOOL fInstrument = FALSE;
 
-#ifdef FEATURE_PREJIT
+#ifdef FEATURE_NATIVE_IMAGE_GENERATION
     // This will make sure that when IBC logging is turned on we will go through a version
     // of JIT_GenericHandle which logs the access. Note that we still want the dictionaries
     // to be populated to prepopulate the types at NGen time.
@@ -3261,7 +3338,7 @@ void CEEInfo::ComputeRuntimeLookupForSharedGenericToken(DictionaryEntryKind entr
     {
         fInstrument = TRUE;
     }
-#endif // FEATURE_PREJIT
+#endif // FEATURE_NATIVE_IMAGE_GENERATION
 
     // If we've got a  method type parameter of any kind then we must look in the method desc arg
     if (pContextMD->RequiresInstMethodDescArg())
@@ -5088,13 +5165,13 @@ void * CEEInfo::getArrayInitializationData(
     if (!pField                    ||
         !pField->IsRVA()           ||
         (pField->LoadSize() < size)
-#ifdef FEATURE_PREJIT
+#ifdef FEATURE_NATIVE_IMAGE_GENERATION
         // This will make sure that when IBC logging is on, the array initialization happens thru 
         // COMArrayInfo::InitializeArray. This gives a place to put the IBC probe that can help
         // separate hold and cold RVA blobs.
         || (IsCompilingForNGen() &&
             GetAppDomain()->ToCompilationDomain()->m_fForceInstrument)
-#endif // FEATURE_PREJIT
+#endif // FEATURE_NATIVE_IMAGE_GENERATION
         )
     {
         result = NULL;
@@ -5446,7 +5523,8 @@ void CEEInfo::getCallInfo(
     // Delegate targets are always treated as direct calls here. (It would be nice to clean it up...).
     if (flags & CORINFO_CALLINFO_LDFTN)
     {
-        TypeEquivalenceFixupSpecificationHelper(m_pOverride, pTargetMD);
+        if (m_pOverride != NULL)
+            TypeEquivalenceFixupSpecificationHelper(m_pOverride, pTargetMD);
         directCall = true;
     }
     else
@@ -5490,8 +5568,10 @@ void CEEInfo::getCallInfo(
             // Note that it is safe to devirtualize in the following cases, since a servicing event cannot later modify it
             //  1) Callvirt on a virtual final method of a value type - since value types are sealed types as per ECMA spec
             //  2) Delegate.Invoke() - since a Delegate is a sealed class as per ECMA spec
+            //  3) JIT intrinsics - since they have pre-defined behavior
             devirt = pTargetMD->GetMethodTable()->IsValueType() ||
-                     (pTargetMD->GetMethodTable()->IsDelegate() && ((DelegateEEClass*)(pTargetMD->GetMethodTable()->GetClass()))->m_pInvokeMethod == pMD);
+                     (pTargetMD->GetMethodTable()->IsDelegate() && ((DelegateEEClass*)(pTargetMD->GetMethodTable()->GetClass()))->m_pInvokeMethod == pMD) ||
+                     (pTargetMD->IsFCall() && ECall::GetIntrinsicID(pTargetMD) != CORINFO_INTRINSIC_Illegal);
 
             callVirtCrossingVersionBubble = true;
         }
@@ -6257,7 +6337,7 @@ CorInfoHelpFunc CEEInfo::getNewHelperStatic(MethodTable * pMT)
         _ASSERTE(helper == CORINFO_HELP_NEWFAST);
     }
     else
-    if (GCHeap::IsLargeObject(pMT) ||
+    if ((pMT->GetBaseSize() >= LARGE_OBJECT_SIZE) || 
         pMT->HasFinalizer())
     {
         // Use slow helper
@@ -6446,7 +6526,7 @@ CorInfoHelpFunc CEEInfo::getCastingHelper(CORINFO_RESOLVED_TOKEN * pResolvedToke
 
     bool fClassMustBeRestored;
     result = getCastingHelperStatic(TypeHandle(pResolvedToken->hClass), fThrowing, &fClassMustBeRestored);
-    if (fClassMustBeRestored)
+    if (fClassMustBeRestored && m_pOverride != NULL)
         m_pOverride->classMustBeLoadedBeforeCodeIsRun(pResolvedToken->hClass);
 
     EE_TO_JIT_TRANSITION();
@@ -6581,7 +6661,7 @@ CorInfoHelpFunc CEEInfo::getUnBoxHelper(CORINFO_CLASS_HANDLE clsHnd)
 {
     LIMITED_METHOD_CONTRACT;
 
-    if (!isVerifyOnly())
+    if (m_pOverride != NULL)
         m_pOverride->classMustBeLoadedBeforeCodeIsRun(clsHnd);
 
     TypeHandle VMClsHnd(clsHnd);
@@ -6675,14 +6755,14 @@ CorInfoHelpFunc CEEInfo::getSecurityPrologHelper(CORINFO_METHOD_HANDLE ftn)
 
     JIT_TO_EE_TRANSITION();
 
-#ifdef FEATURE_PREJIT
+#ifdef FEATURE_NATIVE_IMAGE_GENERATION
     // This will make sure that when IBC logging is on, we call the slow helper with IBC probe
     if (IsCompilingForNGen() &&
         GetAppDomain()->ToCompilationDomain()->m_fForceInstrument)
     {
         result = CORINFO_HELP_SECURITY_PROLOG_FRAMED;
     }
-#endif // FEATURE_PREJIT
+#endif // FEATURE_NATIVE_IMAGE_GENERATION
 
     if (result == CORINFO_HELP_UNDEF)
     {
@@ -9004,8 +9084,19 @@ void CEEInfo::getFunctionFixedEntryPoint(CORINFO_METHOD_HANDLE   ftn,
     MethodDesc * pMD = GetMethod(ftn);
 
     pResult->accessType = IAT_VALUE;
-    pResult->addr = (void *) pMD->GetMultiCallableAddrOfCode();
 
+
+#ifndef CROSSGEN_COMPILE
+    // If LDFTN target has [NativeCallable] attribute , then create a UMEntryThunk.
+    if (pMD->HasNativeCallableAttribute())
+    {
+        pResult->addr = (void*)COMDelegate::ConvertToCallback(pMD);
+    }
+    else
+#endif //CROSSGEN_COMPILE
+    {
+        pResult->addr = (void *)pMD->GetMultiCallableAddrOfCode();
+    }
     EE_TO_JIT_TRANSITION();
 }
 
@@ -9892,6 +9983,18 @@ void* CEEInfo::getAddressOfPInvokeFixup(CORINFO_METHOD_HANDLE method,
     return result;
 }
 
+/*********************************************************************/
+    // return address of fixup area for late-bound N/Direct calls.
+void CEEInfo::getAddressOfPInvokeTarget(CORINFO_METHOD_HANDLE method,
+                                        CORINFO_CONST_LOOKUP *pLookup)
+{
+    WRAPPER_NO_CONTRACT;
+
+    void *pIndirection;
+    pLookup->accessType = IAT_PVALUE;
+    pLookup->addr = getAddressOfPInvokeFixup(method, &pIndirection);
+    _ASSERTE(pIndirection == NULL);
+}
 
 /*********************************************************************/
 CORINFO_JUST_MY_CODE_HANDLE CEEInfo::getJustMyCodeHandle(
@@ -10210,7 +10313,7 @@ int CEEInfo::FilterException(struct _EXCEPTION_POINTERS *pExceptionPointers)
         {
             _ASSERTE(!"Access violation while Jitting!");
             // If you set the debugger to catch access violations and 'go'
-            // you will get back to the point at which the access violation occured
+            // you will get back to the point at which the access violation occurred
             result = EXCEPTION_CONTINUE_EXECUTION;
         }
         else
@@ -10458,6 +10561,23 @@ CORINFO_METHOD_HANDLE CEEInfo::embedMethodHandle(CORINFO_METHOD_HANDLE handle,
     EE_TO_JIT_TRANSITION_LEAF();
 
     return handle;
+}
+
+/*********************************************************************/
+DWORD CEEInfo::getJitFlags(CORJIT_FLAGS* jitFlags, DWORD sizeInBytes)
+{
+    CONTRACTL {
+        SO_TOLERANT;
+        NOTHROW;
+        GC_NOTRIGGER;
+        MODE_PREEMPTIVE;
+    } CONTRACTL_END;
+
+    JIT_TO_EE_TRANSITION_LEAF();
+
+    EE_TO_JIT_TRANSITION_LEAF();
+
+    return 0;
 }
 
 /*********************************************************************/
@@ -11078,8 +11198,8 @@ void CEEJitInfo::allocUnwindInfo (
         for (ULONG iUnwindInfo = 0; iUnwindInfo < m_usedUnwindInfos - 1; iUnwindInfo++)
         {
             PRUNTIME_FUNCTION pOtherFunction = m_CodeHeader->GetUnwindInfo(iUnwindInfo);
-            _ASSERTE(   RUNTIME_FUNCTION__BeginAddress(pOtherFunction) >= RUNTIME_FUNCTION__EndAddress(pRuntimeFunction, baseAddress)
-                     || RUNTIME_FUNCTION__EndAddress(pOtherFunction, baseAddress) <= RUNTIME_FUNCTION__BeginAddress(pRuntimeFunction));
+            _ASSERTE((   RUNTIME_FUNCTION__BeginAddress(pOtherFunction) >= RUNTIME_FUNCTION__EndAddress(pRuntimeFunction, baseAddress)
+                     || RUNTIME_FUNCTION__EndAddress(pOtherFunction, baseAddress) <= RUNTIME_FUNCTION__BeginAddress(pRuntimeFunction)));
         }
     }
 #endif // _DEBUG
@@ -11613,19 +11733,25 @@ void CEEJitInfo::allocMem (
 
     S_SIZE_T totalSize = S_SIZE_T(codeSize);
 
+    size_t roDataAlignment = sizeof(void*);
+    if ((flag & CORJIT_ALLOCMEM_FLG_RODATA_16BYTE_ALIGN)!= 0)
+    {
+        roDataAlignment = 16;
+    }
+    else if (roDataSize >= 8)
+    {
+        roDataAlignment = 8;
+    }
     if (roDataSize > 0)
     {
-        totalSize.AlignUp(sizeof(void *));
-        totalSize += roDataSize;
-
-#ifndef _WIN64
-        if (roDataSize >= 8)
-        {
-            // allocates an extra 4 bytes so that we can
-            // double align the roData section.
-            totalSize += 4;
+        size_t codeAlignment = ((flag & CORJIT_ALLOCMEM_FLG_16BYTE_ALIGN)!= 0)
+                               ? 16 : sizeof(void*);
+        totalSize.AlignUp(codeAlignment);
+        if (roDataAlignment > codeAlignment) {
+            // Add padding to align read-only data.
+            totalSize += (roDataAlignment - codeAlignment);
         }
-#endif
+        totalSize += roDataSize;
     }
 
 #ifdef WIN64EXCEPTIONS
@@ -11660,8 +11786,7 @@ void CEEJitInfo::allocMem (
 
     if (roDataSize > 0)
     {
-        current = (BYTE *)ALIGN_UP(current, (roDataSize >= 8) ? 8 : sizeof(void *));
-
+        current = (BYTE *)ALIGN_UP(current, roDataAlignment);
         *roDataBlock = current;
         current += roDataSize;
     }
@@ -13320,6 +13445,9 @@ BOOL LoadDynamicInfoEntry(Module *currentModule,
         }
         break;
 
+        // ENCODE_METHOD_NATIVECALLABLE_HANDLE is same as ENCODE_METHOD_ENTRY_DEF_TOKEN 
+        // except for AddrOfCode
+    case ENCODE_METHOD_NATIVE_ENTRY:
     case ENCODE_METHOD_ENTRY_DEF_TOKEN:
         {
             mdToken MethodDef = TokenFromRid(CorSigUncompressData(pBlob), mdtMethodDef);
@@ -13375,7 +13503,14 @@ BOOL LoadDynamicInfoEntry(Module *currentModule,
             }
 
         MethodEntry:
-            result = pMD->GetMultiCallableAddrOfCode(CORINFO_ACCESS_ANY);
+            if (kind == ENCODE_METHOD_NATIVE_ENTRY)
+            {
+                result = COMDelegate::ConvertToCallback(pMD);
+            }
+            else
+            {
+                result = pMD->GetMultiCallableAddrOfCode(CORINFO_ACCESS_ANY);
+            }
 
         #ifndef _TARGET_ARM_
             if (CORCOMPILE_IS_PCODE_TAGGED(result))
@@ -14300,15 +14435,23 @@ LPVOID                EECodeInfo::findNextFunclet (LPVOID pvFuncletStart, SIZE_T
 
     while (cbCode > 0)
     {
+        PRUNTIME_FUNCTION   pFunctionEntry;
+        ULONGLONG           uImageBase;
+#ifdef FEATURE_PAL
+        EECodeInfo codeInfo;
+        codeInfo.Init((PCODE)pvFuncletStart);
+        pFunctionEntry = codeInfo.GetFunctionEntry();
+        uImageBase = (ULONGLONG)codeInfo.GetModuleBase();
+#else // !FEATURE_PAL
         //
         // This is GCStress debug only - use the slow OS APIs to enumerate funclets
         //
 
-        ULONGLONG           uImageBase;
-        PRUNTIME_FUNCTION pFunctionEntry = (PRUNTIME_FUNCTION) RtlLookupFunctionEntry((ULONGLONG)pvFuncletStart,
-                                                &uImageBase
-                                                AMD64_ARG(NULL)
-                                                );
+        pFunctionEntry = (PRUNTIME_FUNCTION) RtlLookupFunctionEntry((ULONGLONG)pvFuncletStart,
+                              &uImageBase
+                              AMD64_ARG(NULL)
+                              );
+#endif
 
         if (pFunctionEntry != NULL)
         {

@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /*============================================================
 **
 **
@@ -59,18 +60,18 @@ namespace System.Threading
         static ExecutionContext t_currentMaybeNull;
 
         private readonly Dictionary<IAsyncLocal, object> m_localValues;
-        private readonly List<IAsyncLocal> m_localChangeNotifications;
+        private readonly IAsyncLocal[] m_localChangeNotifications;
 
         private ExecutionContext()
         {
             m_localValues = new Dictionary<IAsyncLocal, object>();
-            m_localChangeNotifications = new List<IAsyncLocal>();
+            m_localChangeNotifications = Array.Empty<IAsyncLocal>();
         }
 
-        private ExecutionContext(ExecutionContext other)
+        private ExecutionContext(Dictionary<IAsyncLocal, object> localValues, IAsyncLocal[] localChangeNotifications)
         {
-            m_localValues = new Dictionary<IAsyncLocal, object>(other.m_localValues);
-            m_localChangeNotifications = new List<IAsyncLocal>(other.m_localChangeNotifications);
+            m_localValues = localValues;
+            m_localChangeNotifications = localChangeNotifications;
         }
 
         [SecuritySafeCritical]
@@ -191,18 +192,39 @@ namespace System.Threading
             if (previousValue == newValue)
                 return;
 
-            current = new ExecutionContext(current);
-            current.m_localValues[local] = newValue;
+            //
+            // Allocate a new Dictionary containing a copy of the old values, plus the new value.  We have to do this manually to 
+            // minimize allocations of IEnumerators, etc.
+            //
+            Dictionary<IAsyncLocal, object> newValues = new Dictionary<IAsyncLocal, object>(current.m_localValues.Count + (hadPreviousValue ? 0 : 1));
 
-            t_currentMaybeNull = current;
+            foreach (KeyValuePair<IAsyncLocal, object> pair in current.m_localValues)
+                newValues.Add(pair.Key, pair.Value);
 
+            newValues[local] = newValue;
+
+            //
+            // Either copy the change notification array, or create a new one, depending on whether we need to add a new item.
+            //
+            IAsyncLocal[] newChangeNotifications = current.m_localChangeNotifications;
             if (needChangeNotifications)
             {
                 if (hadPreviousValue)
-                    Contract.Assert(current.m_localChangeNotifications.Contains(local));
+                {
+                    Contract.Assert(Array.IndexOf(newChangeNotifications, local) >= 0);
+                }
                 else
-                    current.m_localChangeNotifications.Add(local);
+                {
+                    int newNotificationIndex = newChangeNotifications.Length;
+                    Array.Resize(ref newChangeNotifications, newNotificationIndex + 1);
+                    newChangeNotifications[newNotificationIndex] = local;
+                }
+            }
 
+            t_currentMaybeNull = new ExecutionContext(newValues, newChangeNotifications);
+
+            if (needChangeNotifications)
+            {
                 local.OnValueChanged(previousValue, newValue, false);
             }
         }

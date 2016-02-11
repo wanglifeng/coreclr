@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // 
 
 //
@@ -59,12 +58,12 @@ void SecurityPolicy::InitPolicyConfig()
     {
         // Note: These buffers should be at least as big as the longest possible
         // string that will be placed into them by the code below.
-        const size_t cchcache = MAX_PATH + sizeof( W("defaultusersecurity.config.cch") ) / sizeof( WCHAR ) + 1;
-        const size_t cchconfig = MAX_PATH + sizeof( W("defaultusersecurity.config.cch") ) / sizeof( WCHAR ) + 1;
+        const size_t cchcache = MAX_LONGPATH + sizeof( W("defaultusersecurity.config.cch") ) / sizeof( WCHAR ) + 1;
+        const size_t cchconfig = MAX_LONGPATH + sizeof( W("defaultusersecurity.config.cch") ) / sizeof( WCHAR ) + 1;
         NewArrayHolder<WCHAR> cache(new WCHAR[cchcache]);
         NewArrayHolder<WCHAR> config(new WCHAR[cchconfig]);
 
-        HRESULT hr = SecurityConfig::GetMachineDirectory(config, MAX_PATH);
+        HRESULT hr = SecurityConfig::GetMachineDirectory(config, MAX_LONGPATH);
         if (FAILED(hr))
             ThrowHR(hr);
 
@@ -73,7 +72,7 @@ void SecurityPolicy::InitPolicyConfig()
         wcscat_s( cache, cchcache, W(".cch") );
         SecurityConfig::InitData( SecurityConfig::MachinePolicyLevel, config, cache );
 
-        hr = SecurityConfig::GetMachineDirectory(config, MAX_PATH);
+        hr = SecurityConfig::GetMachineDirectory(config, MAX_LONGPATH);
         if (FAILED(hr))
             ThrowHR(hr);
 
@@ -82,7 +81,7 @@ void SecurityPolicy::InitPolicyConfig()
         wcscat_s( cache, cchcache, W(".cch") );
         SecurityConfig::InitData( SecurityConfig::EnterprisePolicyLevel, config, cache );
 
-        BOOL result = SecurityConfig::GetUserDirectory(config, MAX_PATH);
+        BOOL result = SecurityConfig::GetUserDirectory(config, MAX_LONGPATH);
         if (result) {
             wcscat_s( config, cchconfig, W("security.config") );
             wcscpy_s( cache, cchcache, config );
@@ -677,10 +676,10 @@ void QCALLTYPE SecurityPolicy::_GetLongPathName(LPCWSTR wszPath, QCall::StringHa
     BEGIN_QCALL;
 
 #if !defined(PLATFORM_UNIX)
-    WCHAR wszBuffer[MAX_PATH + 1];
+    WCHAR wszBuffer[MAX_LONGPATH + 1];
     ZeroMemory(wszBuffer, sizeof(wszBuffer));
                 
-    if (SecurityPolicy::GetLongPathNameHelper( wszPath, wszBuffer, MAX_PATH ) != 0)
+    if (SecurityPolicy::GetLongPathNameHelper( wszPath, wszBuffer, MAX_LONGPATH ) != 0)
     {
         retLongPath.Set( wszBuffer );
     }
@@ -708,9 +707,9 @@ size_t SecurityPolicy::GetLongPathNameHelper( const WCHAR* wszShortPath, __inout
         // trying GetLongPathName on every subdirectory until
         // it succeeds or we run out of string.
 
-        WCHAR wszIntermediateBuffer[MAX_PATH];
+        WCHAR wszIntermediateBuffer[MAX_LONGPATH];
 
-        if (wcslen( wszShortPath ) >= MAX_PATH)
+        if (wcslen( wszShortPath ) >= MAX_LONGPATH)
             return 0;
 
         wcscpy_s( wszIntermediateBuffer, COUNTOF(wszIntermediateBuffer), wszShortPath );
@@ -725,24 +724,24 @@ size_t SecurityPolicy::GetLongPathNameHelper( const WCHAR* wszShortPath, __inout
             if (index == 0)
                 break;
 
-			#ifdef _PREFAST_
+            #ifdef _PREFAST_
             #pragma prefast(push)
             #pragma prefast(disable:26001, "suppress prefast warning about underflow by doing index-1 which is checked above.")
-			#endif // _PREFAST_
-			
+            #endif // _PREFAST_
+            
             wszIntermediateBuffer[index-1] = W('\0');
 
-			#ifdef _PREFAST_
+            #ifdef _PREFAST_
             #pragma prefast(pop)
-			#endif
+            #endif
 
-            size = WszGetLongPathName(wszIntermediateBuffer, wszBuffer, MAX_PATH);
+            size = WszGetLongPathName(wszIntermediateBuffer, wszBuffer, MAX_LONGPATH);
 
             if (size != 0)
             {
                 size_t sizeBuffer = wcslen( wszBuffer );
 
-                if (sizeBuffer + wcslen( &wszIntermediateBuffer[index] ) > MAX_PATH - 2)
+                if (sizeBuffer + wcslen( &wszIntermediateBuffer[index] ) > MAX_LONGPATH - 2)
                 {
                     return 0;
                 }
@@ -759,7 +758,7 @@ size_t SecurityPolicy::GetLongPathNameHelper( const WCHAR* wszShortPath, __inout
 
         return 0;
     }
-    else if (size > MAX_PATH)
+    else if (size > MAX_LONGPATH)
     {
         return 0;
     }
@@ -777,8 +776,8 @@ void QCALLTYPE SecurityPolicy::GetDeviceName(LPCWSTR wszDriveLetter, QCall::Stri
 #if !defined(FEATURE_CORECLR)
     BEGIN_QCALL;
 
-    WCHAR networkName[MAX_PATH];
-    DWORD networkNameSize = MAX_PATH;
+    WCHAR networkName[MAX_LONGPATH];
+    DWORD networkNameSize = MAX_LONGPATH;
     ZeroMemory( networkName, sizeof( networkName ) );
 
     UINT driveType = WszGetDriveType( wszDriveLetter );

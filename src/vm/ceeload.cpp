@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: CEELOAD.CPP
 // 
@@ -38,7 +37,6 @@
 #include "virtualcallstub.h"
 #include "typestring.h"
 #include "stringliteralmap.h"
-#include "eventtrace.h"
 #include <formattype.h>
 #include "fieldmarshaler.h"
 #include "sigbuilder.h"
@@ -1167,10 +1165,12 @@ BOOL Module::CanCacheWinRTTypeByGuid(MethodTable *pMT)
     if (WinRTTypeNameConverter::IsRedirectedWinRTSourceType(pMT))
         return FALSE;
 
+#ifdef FEATURE_NATIVE_IMAGE_GENERATION
     // Don't cache in a module that's not the NGen target, since the result
     // won't be saved, and since the such a module might be read-only.
     if (GetAppDomain()->ToCompilationDomain()->GetTargetModule() != this)
         return FALSE;
+#endif
 
     return TRUE;
 }
@@ -1418,7 +1418,10 @@ void Module::SetDebuggerInfoBits(DebuggerAssemblyControlFlags newBits)
     m_dwTransientFlags |= (newBits << DEBUGGER_INFO_SHIFT_PRIV);
 
 #ifdef DEBUGGING_SUPPORTED 
-    BOOL setEnC = ((newBits & DACF_ENC_ENABLED) != 0) && IsEditAndContinueCapable() && !GetAssembly()->IsDomainNeutral();
+    BOOL setEnC = ((newBits & DACF_ENC_ENABLED) != 0) && IsEditAndContinueCapable();
+
+    // IsEditAndContinueCapable should already check !GetAssembly()->IsDomainNeutral
+    _ASSERTE(!setEnC || !GetAssembly()->IsDomainNeutral());
 
     // The only way can change Enc is through debugger override.
     if (setEnC)
@@ -1482,8 +1485,11 @@ Module *Module::Create(Assembly *pAssembly, mdFile moduleRef, PEFile *file, Allo
     if (pModule == NULL)
     {
 #ifdef EnC_SUPPORTED
-        if (IsEditAndContinueCapable(file) && !pAssembly->IsDomainNeutral())
+        if (IsEditAndContinueCapable(pAssembly, file))
         {
+            // IsEditAndContinueCapable should already check !pAssembly->IsDomainNeutral
+            _ASSERTE(!pAssembly->IsDomainNeutral());
+            
             // if file is EnCCapable, always create an EnC-module, but EnC won't necessarily be enabled.
             // Debugger enables this by calling SetJITCompilerFlags on LoadModule callback.
 
@@ -1503,6 +1509,30 @@ Module *Module::Create(Assembly *pAssembly, mdFile moduleRef, PEFile *file, Allo
     pModuleSafe->DoInit(pamTracker, NULL);
 
     RETURN pModuleSafe.Extract();
+}
+
+void Module::ApplyMetaData()
+{
+    CONTRACTL
+    {
+        THROWS;
+        GC_NOTRIGGER;
+        MODE_ANY;
+    }
+    CONTRACTL_END;
+
+    LOG((LF_CLASSLOADER, LL_INFO100, "Module::ApplyNewMetaData %x\n", this));
+
+    HRESULT hr = S_OK;
+    ULONG ulCount;
+
+    // Ensure for TypeRef
+    ulCount = GetMDImport()->GetCountWithTokenKind(mdtTypeRef) + 1;
+    EnsureTypeRefCanBeStored(TokenFromRid(ulCount, mdtTypeRef));
+
+    // Ensure for AssemblyRef
+    ulCount = GetMDImport()->GetCountWithTokenKind(mdtAssemblyRef) + 1;
+    EnsureAssemblyRefCanBeStored(TokenFromRid(ulCount, mdtAssemblyRef));
 }
 
 //
@@ -2152,7 +2182,29 @@ PTR_Module Module::GetPreferredZapModuleForFieldDesc(FieldDesc * pFD)
 }
 #endif // FEATURE_PREJIT
 
+/*static*/
+BOOL Module::IsEditAndContinueCapable(Assembly *pAssembly, PEFile *file)
+{
+    CONTRACTL
+        {
+            NOTHROW;
+            GC_NOTRIGGER;
+            SO_TOLERANT;
+            MODE_ANY;
+            SUPPORTS_DAC;
+        }
+    CONTRACTL_END;
 
+    _ASSERTE(pAssembly != NULL && file != NULL);
+    
+    // Some modules are never EnC-capable
+    return ! (pAssembly->GetDebuggerInfoBits() & DACF_ALLOW_JIT_OPTS ||
+              pAssembly->IsDomainNeutral() ||
+              file->IsSystem() ||
+              file->IsResource() ||
+              file->HasNativeImage() ||
+              file->IsDynamic());
+}
 
 BOOL Module::IsManifest()
 {
@@ -3068,7 +3120,7 @@ BOOL Module::IsRuntimeWrapExceptions()
         if (hr == S_OK)
         {
             CustomAttributeParser ca(pVal, cbVal);
-            CaNamedArg namedArgs[1];
+            CaNamedArg namedArgs[1] = {{0}};
             
             // First, the void constructor:
             IfFailGo(ParseKnownCaArgs(ca, NULL, 0));
@@ -4467,7 +4519,15 @@ void Module::SetSymbolBytes(LPCBYTE pbSyms, DWORD cbSyms)
                                                 &cbWritten);
     IfFailThrow(HRESULT_FROM_WIN32(dwError));
 
-    // Don't eager load the diasymreader
+#if PROFILING_SUPPORTED && !defined(CROSSGEN_COMPILE)
+    BEGIN_PIN_PROFILER(CORProfilerInMemorySymbolsUpdatesEnabled());
+    {
+        g_profControlBlock.pProfInterface->ModuleInMemorySymbolsUpdated((ModuleID) this);
+    }
+    END_PIN_PROFILER();
+#endif //PROFILING_SUPPORTED && !defined(CROSSGEN_COMPILE)
+
+    ETW::CodeSymbolLog::EmitCodeSymbols(this);
 
     // Tell the debugger that symbols have been loaded for this
     // module.  We iterate through all domains which contain this
@@ -6230,21 +6290,17 @@ Module *Module::GetModuleIfLoaded(mdFile kFile, BOOL onlyLoadedInAppDomain, BOOL
     if (!permitResources && pModule && pModule->IsResource())
         pModule = NULL;
 
+#ifndef DACCESS_COMPILE
 #if defined(FEATURE_MULTIMODULE_ASSEMBLIES)
     // check if actually loaded, unless happens during GC (GC works only with loaded assemblies)
     if (!GCHeap::IsGCInProgress() && onlyLoadedInAppDomain && pModule && !pModule->IsManifest())
     {
-#ifndef DACCESS_COMPILE
         DomainModule *pDomainModule = pModule->FindDomainModule(GetAppDomain());
         if (pDomainModule == NULL || !pDomainModule->IsLoaded())
             pModule = NULL;
-#else
-        // unfortunately DAC doesn't have a GetAppDomain() however multi-module
-        // assemblies aren't very common so it should be ok to fail here for now.
-        DacNotImpl();
-#endif // !DACCESS_COMPILE
     }    
 #endif // FEATURE_MULTIMODULE_ASSEMBLIES
+#endif // !DACCESS_COMPILE
     RETURN pModule;
 }
 
@@ -14816,7 +14872,7 @@ void ReflectionModule::ReleaseILData()
 
     Module::ReleaseILData();
 }
-#endif // CROSSGEN_COMPILE
+#endif // !CROSSGEN_COMPILE
 
 #endif // !DACCESS_COMPILE
 

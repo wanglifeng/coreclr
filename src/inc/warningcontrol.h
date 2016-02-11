@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // warningcontrol.h
 //
@@ -48,6 +47,7 @@
 #pragma warning(disable :4334)   // result of 32-bit shift implicitly converted to 64 bits
 #pragma warning(disable :4345)   // behavior change: an object of POD type constructed with an initializer of the form () will be default-initialized
 #pragma warning(disable :4430)   // missing type specifier: C++ doesn't support default-int
+#pragma warning(disable :4477)   // format string '%$S' requires an argument of type '%$S', but variadic argument %d has type '%$S'
 #pragma warning(3               :4509)   // "nonstandard extension used: '%$S' uses SEH and '%$S' has destructor"
                                                                  //
                                                                  // But beware of doing a return from inside such a try block:

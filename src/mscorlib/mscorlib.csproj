@@ -1,10 +1,10 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   
   <!-- Include common build properties -->
   <Import Project="..\..\dir.props" />
-  
+ 
   <!-- Compilation options -->
   <PropertyGroup>
     <AvailablePlatforms>amd64,x86,arm,arm64</AvailablePlatforms>
@@ -29,7 +29,7 @@
     <HighEntropyVA>true</HighEntropyVA>
     <ErrorReport>prompt</ErrorReport>
     <Optimize Condition="'$(Optimize)' == ''">true</Optimize>
-    <GenerateNativeVersionInfo>true</GenerateNativeVersionInfo>
+    <GenerateNativeVersionInfo Condition="'$(OsEnvironment)'=='Windows_NT'">true</GenerateNativeVersionInfo>
     <CLSCompliant>true</CLSCompliant>
     <WarningLevel>4</WarningLevel>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
@@ -39,7 +39,6 @@
 
     <SignAssembly>true</SignAssembly>
     <DelaySign>true</DelaySign>
-    <AssemblyOriginatorKeyFile Condition="'$(AssemblyOriginatorKeyFile)' == ''">$(MSBuildThisFileDirectory)Tools\Signing\PublicTestKey.snk</AssemblyOriginatorKeyFile>
 
     <DefineConstants>$(DefineConstants);NEW_EXPERIMENTAL_ASYNC_IO;_USE_NLS_PLUS_TABLE;RESOURCE_SATELLITE_CONFIG;INSIDE_CLR;CODE_ANALYSIS_BASELINE</DefineConstants>
   </PropertyGroup>
@@ -66,7 +65,7 @@
   </PropertyGroup>
   
   <!-- Configuration specific properties -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' or '$(Configuration)' == 'Checked'">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <DefineConstants>DBG;_DEBUG;_LOGGING;DEBUG;TRACE;$(DefineConstants)</DefineConstants>
@@ -76,6 +75,12 @@
     <DebugSymbols>true</DebugSymbols>
     <DebugType>pdbOnly</DebugType>
     <DefineConstants>TRACE;$(DefineConstants)</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Roslyn does not support writing PDBs on Unix -->
+  <PropertyGroup Condition="'$(OsEnvironment)' == 'Unix'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
   </PropertyGroup>
 
   <!-- Assembly attributes -->
@@ -119,6 +124,7 @@
     
     <!-- These are needed by BCLRewriter -->
     <_BuildType Condition="'$(Configuration)' == 'Debug'">chk</_BuildType>
+    <_BuildType Condition="'$(Configuration)' == 'Checked'">chk</_BuildType>
     <_BuildType Condition="'$(Configuration)' == 'Release'">ret</_BuildType>
 
     <!-- These are needed to make sure we have the right set of defines -->
@@ -148,7 +154,6 @@
   <ItemGroup>
     <!-- We want the sources to show up nicely in VS-->
     <Compile Include="@(MscorlibSources)">
-      <Link>$([MSBuild]::MakeRelative($(BclSourcesRoot), %(Identity))</Link>
     </Compile>
   </ItemGroup>
   
@@ -165,7 +170,15 @@
     </EmbeddedResource>
   </ItemGroup>
 
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.Targets" />
+
+  <!-- Import signing tools -->
+  <Import Condition="Exists('$(ToolsDir)\sign.targets')" Project="$(ToolsDir)\sign.targets" />
+
+  <!-- Overwrite the key that we are going to use for signing -->
+  <PropertyGroup>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)Tools\Signing\mscorlib.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
 
   <Import Project="$(MSBuildThisFileDirectory)Tools\Versioning\GenerateVersionInfo.targets"/>
   <Import Project="GenerateSplitStringResources.targets"/>

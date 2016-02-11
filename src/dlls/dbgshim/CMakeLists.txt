@@ -1,6 +1,8 @@
 add_definitions(-DFEATURE_NO_HOST)
 add_definitions(-DSELF_NO_HOST)
 
+include_directories(${CLR_DIR}/src/debug/shim)
+
 set(DBGSHIM_SOURCES
     dbgshim.cpp
 )
@@ -28,7 +30,7 @@ if(CLR_CMAKE_PLATFORM_LINUX)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Xlinker -Bsymbolic -Bsymbolic-functions")
 endif(CLR_CMAKE_PLATFORM_LINUX)
 
-add_library(dbgshim SHARED ${DBGSHIM_SOURCES})
+add_library_clr(dbgshim SHARED ${DBGSHIM_SOURCES})
 
 set(DBGSHIM_LIBRARIES
     debug-pal
@@ -53,6 +55,7 @@ if(WIN32)
 else()
     list(APPEND DBGSHIM_LIBRARIES
         coreclrpal
+        mscorrc_debug
         palrt
     )
 endif(WIN32)

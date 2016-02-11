@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -168,7 +167,7 @@ namespace CorUnix
         }
 
 #if SYNCHMGR_SUSPENSION_SAFE_CONDITION_SIGNALING && !SYNCHMGR_PIPE_BASED_THREAD_BLOCKING
-        PAL_ERROR RunDeferredThreadConditionSignalings(CPalThread * pthrCurrent);
+        PAL_ERROR RunDeferredThreadConditionSignalings();
 #endif // SYNCHMGR_SUSPENSION_SAFE_CONDITION_SIGNALING && !SYNCHMGR_PIPE_BASED_THREAD_BLOCKING
     
         // NOTE: the following methods provide non-synchronized access to 
@@ -205,8 +204,7 @@ namespace CorUnix
     class CPalSynchMgrController
     {
     public:
-        static IPalSynchronizationManager * CreatePalSynchronizationManager(
-            CPalThread * pthrCurrent);
+        static IPalSynchronizationManager * CreatePalSynchronizationManager();
 
         static PAL_ERROR StartWorker(CPalThread * pthrCurrent);
 

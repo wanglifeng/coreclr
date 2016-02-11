@@ -1,13 +1,14 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*****************************************************************************
  *
  * GC Information Encoding API
  *
  */
+
+#include <stdint.h>
 
 #include "gcinfoencoder.h"
 
@@ -627,7 +628,9 @@ void GcInfoEncoder::Build()
      m_DbgEncoder.Build();
 #endif    
 
+#ifdef _DEBUG
     _ASSERTE(m_IsSlotTableFrozen || m_NumSlots == 0);
+#endif
 
     _ASSERTE((1 << NUM_NORM_CODE_OFFSETS_PER_CHUNK_LOG2) == NUM_NORM_CODE_OFFSETS_PER_CHUNK);
 
@@ -687,7 +690,7 @@ void GcInfoEncoder::Build()
         UINT32 normPrologSize = NORMALIZE_CODE_OFFSET(intersectionStart);
         UINT32 normEpilogSize = NORMALIZE_CODE_OFFSET(m_CodeLength) - NORMALIZE_CODE_OFFSET(intersectionEnd);
         _ASSERTE(normPrologSize > 0 && normPrologSize < m_CodeLength);
-        _ASSERTE(normEpilogSize >= 0 && normEpilogSize < m_CodeLength);
+        _ASSERTE(normEpilogSize < m_CodeLength);
         
         GCINFO_WRITE_VARL_U(m_Info1, normPrologSize-1, NORM_PROLOG_SIZE_ENCBASE, ProEpilogSize);
         GCINFO_WRITE_VARL_U(m_Info1, normEpilogSize, NORM_EPILOG_SIZE_ENCBASE, ProEpilogSize);
@@ -1092,8 +1095,8 @@ void GcInfoEncoder::Build()
                 if(!IsAlwaysScratch(m_SlotTable[slotIndex]))
                 {
                     BYTE becomesLive = pCurrent->BecomesLive;
-                    _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                            || !liveState.ReadBit(slotIndex) && becomesLive);
+                    _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                            || (!liveState.ReadBit(slotIndex) && becomesLive));
                       
                     liveState.WriteBit(slotIndex, becomesLive);
                 }
@@ -1122,8 +1125,8 @@ void GcInfoEncoder::Build()
             {
                 UINT32 slotIndex = (UINT32) (pFirstAfterStart->SlotId);
                 BYTE becomesLive = pFirstAfterStart->BecomesLive;
-                _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                        || !liveState.ReadBit(slotIndex) && becomesLive);
+                _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                        || (!liveState.ReadBit(slotIndex) && becomesLive));
                 liveState.WriteBit(slotIndex, becomesLive);
 
                 if(++pFirstAfterStart == pEndTransitions)
@@ -1140,8 +1143,8 @@ void GcInfoEncoder::Build()
             {
                 UINT32 slotIndex = (UINT32) (pCurrent->SlotId);
                 BYTE becomesLive = pCurrent->BecomesLive;
-                _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                        || !liveState.ReadBit(slotIndex) && becomesLive);
+                _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                        || (!liveState.ReadBit(slotIndex) && becomesLive));
                 liveState.WriteBit(slotIndex, becomesLive);
                 couldBeLive.SetBit(slotIndex);
             }
@@ -1216,7 +1219,6 @@ void GcInfoEncoder::Build()
         UINT32 i;
         for(i = 0; i < m_NumSlots && m_SlotTable[i].IsRegister(); i++)
         {
-            GcSlotDesc* pSlotDesc = &m_SlotTable[i];
             if(m_SlotTable[i].IsDeleted())
             {
                 numDeleted++;
@@ -1226,7 +1228,6 @@ void GcInfoEncoder::Build()
 
         for(; i < m_NumSlots && !m_SlotTable[i].IsUntracked(); i++)
         {
-            GcSlotDesc* pSlotDesc = &m_SlotTable[i];
             if(m_SlotTable[i].IsDeleted())
             {
                 numDeleted++;
@@ -1454,8 +1455,8 @@ void GcInfoEncoder::Build()
             {
                 UINT32 slotIndex = pCurrent->SlotId;
                 BYTE becomesLive = pCurrent->BecomesLive;
-                _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                        || !liveState.ReadBit(slotIndex) && becomesLive);
+                _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                        || (!liveState.ReadBit(slotIndex) && becomesLive));
                 liveState.WriteBit(slotIndex, becomesLive);
                 pCurrent++;
             }
@@ -1528,6 +1529,7 @@ void GcInfoEncoder::Build()
                     UINT32 liveStateOffset;
                     bool found = hashMap.Lookup(&liveState, &liveStateOffset);
                     _ASSERTE(found);
+                    (void)found;
                     GCINFO_WRITE(m_Info1, liveStateOffset, numBitsPerPointer, CallSiteStateSize);
 
 
@@ -1540,8 +1542,8 @@ void GcInfoEncoder::Build()
                 {
                     UINT32 slotIndex = pCurrent->SlotId;
                     BYTE becomesLive = pCurrent->BecomesLive;
-                    _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                            || !liveState.ReadBit(slotIndex) && becomesLive);
+                    _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                            || (!liveState.ReadBit(slotIndex) && becomesLive));
                     liveState.WriteBit(slotIndex, becomesLive);
                     pCurrent++;
                 }
@@ -1552,6 +1554,7 @@ void GcInfoEncoder::Build()
                 UINT32 liveStateOffset;
                 bool found = hashMap.Lookup(&liveState, &liveStateOffset);
                 _ASSERTE(found);
+                (void)found;
                 for( ; callSiteIndex < m_NumCallSites; callSiteIndex++)
                 {
                     GCINFO_WRITE(m_Info1, liveStateOffset, numBitsPerPointer, CallSiteStateSize);
@@ -1579,8 +1582,8 @@ void GcInfoEncoder::Build()
                 {
                     UINT32 slotIndex = pCurrent->SlotId;
                     BYTE becomesLive = pCurrent->BecomesLive;
-                    _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                            || !liveState.ReadBit(slotIndex) && becomesLive);
+                    _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                            || (!liveState.ReadBit(slotIndex) && becomesLive));
                     liveState.WriteBit(slotIndex, becomesLive);
                     pCurrent++;
                 }
@@ -1679,8 +1682,8 @@ void GcInfoEncoder::Build()
             {
                 UINT32 slotIndex = (UINT32) (pFirstAfterStart->SlotId);
                 BYTE becomesLive = pFirstAfterStart->BecomesLive;
-                _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                        || !liveState.ReadBit(slotIndex) && becomesLive);
+                _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                        || (!liveState.ReadBit(slotIndex) && becomesLive));
                 liveState.WriteBit(slotIndex, becomesLive);
 
                 if(++pFirstAfterStart == pEndTransitions)
@@ -1723,8 +1726,8 @@ void GcInfoEncoder::Build()
                 
                 UINT32 slotIndex = (UINT32) (pCurrent->SlotId);
                 BYTE becomesLive = pCurrent->BecomesLive;
-                _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                        || !liveState.ReadBit(slotIndex) && becomesLive);
+                _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                        || (!liveState.ReadBit(slotIndex) && becomesLive));
                 liveState.WriteBit(slotIndex, becomesLive);
             }
 
@@ -1794,8 +1797,8 @@ void GcInfoEncoder::Build()
             {
                 UINT32 slotIndex = (UINT32) (pCurrent->SlotId);
                 BYTE becomesLive = pCurrent->BecomesLive;
-                _ASSERTE(liveState.ReadBit(slotIndex) && !becomesLive
-                        || !liveState.ReadBit(slotIndex) && becomesLive);
+                _ASSERTE((liveState.ReadBit(slotIndex) && !becomesLive)
+                        || (!liveState.ReadBit(slotIndex) && becomesLive));
                 liveState.WriteBit(slotIndex, becomesLive);
                 couldBeLive.SetBit(slotIndex);
 
@@ -2013,7 +2016,6 @@ void GcInfoEncoder::SizeofSlotStateVarLengthVector(const BitArray &vector,
         sizeofRLENeg = 2;
 
         UINT32 rleStart = 0;
-        UINT32 rleDeleted = 0;
         bool fPrev = false;
         UINT32 i;
         for(i = 0; i < m_NumSlots && !m_SlotTable[i].IsUntracked(); i++)

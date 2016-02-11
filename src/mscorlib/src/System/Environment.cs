@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -379,9 +380,9 @@ namespace System {
             [System.Security.SecuritySafeCritical]  // auto-generated
 #endif
             get {
-                StringBuilder sb = new StringBuilder(Path.MAX_PATH);
-                int r = Win32Native.GetSystemDirectory(sb, Path.MAX_PATH);
-                Contract.Assert(r < Path.MAX_PATH, "r < Path.MAX_PATH");
+                StringBuilder sb = new StringBuilder(Path.MaxPath);
+                int r = Win32Native.GetSystemDirectory(sb, Path.MaxPath);
+                Contract.Assert(r < Path.MaxPath, "r < Path.MaxPath");
                 if (r==0) __Error.WinIOError();
                 String path = sb.ToString();
                 
@@ -399,9 +400,9 @@ namespace System {
         internal static String InternalWindowsDirectory {
             [System.Security.SecurityCritical]  // auto-generated
             get {
-                StringBuilder sb = new StringBuilder(Path.MAX_PATH);
-                int r = Win32Native.GetWindowsDirectory(sb, Path.MAX_PATH);
-                Contract.Assert(r < Path.MAX_PATH, "r < Path.MAX_PATH");
+                StringBuilder sb = new StringBuilder(Path.MaxPath);
+                int r = Win32Native.GetWindowsDirectory(sb, Path.MaxPath);
+                Contract.Assert(r < Path.MaxPath, "r < Path.MaxPath");
                 if (r==0) __Error.WinIOError();
                 String path = sb.ToString();
                 
@@ -531,9 +532,19 @@ namespace System {
         public static String MachineName {
             [System.Security.SecuritySafeCritical]  // auto-generated
             get {
+
+                // UWP Debug scenarios
+                if (AppDomain.IsAppXModel() && !AppDomain.IsAppXDesignMode())
+                {
+                    // Getting Computer Name is not a supported scenario on Store apps.
+                    throw new PlatformNotSupportedException();
+                }
+
                 // In future release of operating systems, you might be able to rename a machine without
                 // rebooting.  Therefore, don't cache this machine name.
+#if !FEATURE_CORECLR
                 new EnvironmentPermission(EnvironmentPermissionAccess.Read, "COMPUTERNAME").Demand();
+#endif
                 StringBuilder buf = new StringBuilder(MaxMachineNameLength);
                 int len = MaxMachineNameLength;
                 if (Win32Native.GetComputerName(buf, ref len) == 0)
@@ -564,7 +575,6 @@ namespace System {
             }
         }
 
-#if !FEATURE_CORECLR
         /*==============================GetCommandLineArgs==============================
         **Action: Gets the command line and splits it appropriately to deal with whitespace,
         **        quotes, and escape characters.
@@ -573,15 +583,34 @@ namespace System {
         **Exceptions: None.
         ==============================================================================*/
         [System.Security.SecuritySafeCritical]  // auto-generated
-        public static String[] GetCommandLineArgs() {
+        public static String[] GetCommandLineArgs()
+        {
             new EnvironmentPermission(EnvironmentPermissionAccess.Read, "Path").Demand();
+#if FEATURE_CORECLR
+            /*
+             * There are multiple entry points to a hosted app.
+             * The host could use ::ExecuteAssembly() or ::CreateDelegate option
+             * ::ExecuteAssembly() -> In this particular case, the runtime invokes the main 
+               method based on the arguments set by the host, and we return those arguments
+             *
+             * ::CreateDelegate() -> In this particular case, the host is asked to create a 
+             * delegate based on the appDomain, assembly and methodDesc passed to it.
+             * which the caller uses to invoke the method. In this particular case we do not have
+             * any information on what arguments would be passed to the delegate.
+             * So our best bet is to simply use the commandLine that was used to invoke the process.
+             * in case it is present.
+             */
+            if(s_CommandLineArgs != null)
+                return (string[])s_CommandLineArgs.Clone();
+#endif
             return GetCommandLineArgsNative();
         }
 
         [System.Security.SecurityCritical]  // auto-generated
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         private static extern String[] GetCommandLineArgsNative();
-        
+
+#if !FEATURE_CORECLR
         // We need to keep this Fcall since it is used in AppDomain.cs.
         // If we call GetEnvironmentVariable from AppDomain.cs, we will use StringBuilder class.
         // That has side effect to change the ApartmentState of the calling Thread to MTA.
@@ -590,7 +619,15 @@ namespace System {
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         internal static extern String nativeGetEnvironmentVariable(String variable);
 #endif //!FEATURE_CORECLR
-        
+
+#if FEATURE_CORECLR
+        private static string[] s_CommandLineArgs = null;
+        private static void SetCommandLineArgs(string[] cmdLineArgs)
+        {
+            s_CommandLineArgs = cmdLineArgs;
+        }
+#endif
+
         /*============================GetEnvironmentVariable============================
         **Action:
         **Returns:
@@ -1213,9 +1250,9 @@ namespace System {
             }
         }
 
-        #if FEATURE_CORECLR
+#if FEATURE_CORECLR
         [System.Security.SecurityCritical] // auto-generated
-        #endif
+#endif
         internal static String GetStackTrace(Exception e, bool needFileInfo)
         {
             // Note: Setting needFileInfo to true will start up COM and set our
@@ -1261,16 +1298,16 @@ namespace System {
         [System.Security.SecurityCritical]  // auto-generated
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         internal extern static String GetResourceFromDefault(String key);           
-#endif	
+#endif
 
         // Looks up the resource string value for key.
         // 
         // if you change this method's signature then you must change the code that calls it
         // in excep.cpp and probably you will have to visit mscorlib.h to add the new signature
         // as well as metasig.h to create the new signature type
-        #if FEATURE_CORECLR
+#if FEATURE_CORECLR
         [System.Security.SecurityCritical] // auto-generated
-        #endif
+#endif
         internal static String GetResourceStringLocal(String key) {
             if (m_resHelper == null)
                 InitResourceHelper();
@@ -1319,26 +1356,26 @@ namespace System {
 
         public static bool Is64BitProcess {
             get {
-                #if WIN32
+#if WIN32
                     return false;
-                #else
+#else
                     return true;
-                #endif
+#endif
             }
         }
 
         public static bool Is64BitOperatingSystem {
             [System.Security.SecuritySafeCritical]
             get {
-                #if WIN32                    
+#if WIN32
                     bool isWow64; // WinXP SP2+ and Win2k3 SP1+
                     return Win32Native.DoesWin32MethodExist(Win32Native.KERNEL32, "IsWow64Process")
                         && Win32Native.IsWow64Process(Win32Native.GetCurrentProcess(), out isWow64)
                         && isWow64;
-                #else
+#else
                     // 64-bit programs run only on 64-bit
                     return true;
-                #endif
+#endif
             }
         }
 
@@ -1458,7 +1495,7 @@ namespace System {
             }
 #endif
 
-            StringBuilder sb = new StringBuilder(Path.MAX_PATH);
+            StringBuilder sb = new StringBuilder(Path.MaxPath);
             int hresult = Win32Native.SHGetFolderPath(IntPtr.Zero,                    /* hwndOwner: [in] Reserved */
                                                       ((int)folder | (int)option),    /* nFolder:   [in] CSIDL    */
                                                       IntPtr.Zero,                    /* hToken:    [in] access token */

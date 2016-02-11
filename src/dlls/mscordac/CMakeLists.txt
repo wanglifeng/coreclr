@@ -42,7 +42,7 @@ else(WIN32)
     endif(CLR_CMAKE_PLATFORM_LINUX)
 endif(WIN32)
 
-add_library(mscordaccore SHARED ${CLR_DAC_SOURCES})
+add_library_clr(mscordaccore SHARED ${CLR_DAC_SOURCES})
 
 # IMPORTANT! Please do not rearrange the order of the libraries. The linker on Linux is
 # order dependent and changing the order can result in undefined symbols in the shared 
@@ -71,9 +71,8 @@ if(WIN32)
     # Generate export file
     add_custom_command(TARGET mscordaccore
         PRE_LINK
-        COMMAND lib.exe /OUT:${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/mscordaccore.lib /DEF:${CMAKE_CURRENT_BINARY_DIR}/mscordac.def $<TARGET_FILE:daccess> ${STATIC_LIBRARY_FLAGS} ${CMAKE_CURRENT_BINARY_DIR}/mscordaccore.dir/$<CONFIG>/mscordac.obj
+        COMMAND lib.exe /OUT:"${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/mscordaccore.lib" /DEF:"${CMAKE_CURRENT_BINARY_DIR}/mscordac.def" "$<TARGET_FILE:daccess>" $<$<OR:$<CONFIG:Release>,$<CONFIG:Relwithdebinfo>>:/LTCG> ${STATIC_LIBRARY_FLAGS} "${CMAKE_CURRENT_BINARY_DIR}/mscordaccore.dir/$<CONFIG>/mscordac.obj"
         COMMENT "Generating mscordaccore.exp export file"
-        VERBATIM
     )
 
     set(COREDAC_LIBRARIES

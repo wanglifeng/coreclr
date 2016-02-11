@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ===========================================================================
 // File: CEEMAIN.CPP
 // ===========================================================================
@@ -195,6 +194,7 @@
 #include "eemessagebox.h"
 #include "finalizerthread.h"
 #include "threadsuspend.h"
+#include "disassembler.h"
 
 #ifndef FEATURE_PAL
 #include "dwreport.h"
@@ -255,6 +255,11 @@
 #ifdef FEATURE_PERFMAP
 #include "perfmap.h"
 #endif
+
+#ifndef FEATURE_PAL
+// Included for referencing __security_cookie
+#include "process.h"
+#endif // !FEATURE_PAL
 
 #ifdef FEATURE_IPCMAN
 static HRESULT InitializeIPCManager(void);
@@ -493,6 +498,7 @@ HRESULT EnsureEEStarted(COINITIEE flags)
 
 #ifndef CROSSGEN_COMPILE
 
+#ifndef FEATURE_PAL
 // This is our Ctrl-C, Ctrl-Break, etc. handler.
 static BOOL WINAPI DbgCtrlCHandler(DWORD dwCtrlType)
 {
@@ -514,9 +520,10 @@ static BOOL WINAPI DbgCtrlCHandler(DWORD dwCtrlType)
 #endif // DEBUGGING_SUPPORTED
     {         
         g_fInControlC = true;     // only for weakening assertions in checked build.
-        return FALSE;               // keep looking for a real handler.
+        return FALSE;             // keep looking for a real handler.
     }
 }
+#endif
 
 // A host can specify that it only wants one version of hosting interface to be used.
 BOOL g_singleVersionHosting;
@@ -683,15 +690,6 @@ DWORD __stdcall BBSweepStartFunction(LPVOID lpArgs)
 
 //-----------------------------------------------------------------------------
 
-#ifndef FEATURE_PAL
-// Defined by CRT
-extern "C"
-{
-    extern DWORD_PTR __security_cookie;
-    extern void __fastcall __security_check_cookie(DWORD_PTR cookie);
-}
-#endif // !FEATURE_PAL
-
 void InitGSCookie()
 {
     CONTRACTL
@@ -717,7 +715,7 @@ void InitGSCookie()
                               PAGE_EXECUTE_WRITECOPY|PAGE_WRITECOMBINE)) == 0));
 
     // Forces VC cookie to be initialized.
-    void (__fastcall *pf)(DWORD_PTR cookie) = &__security_check_cookie;
+    void * pf = &__security_check_cookie;
     pf = NULL;
 
     GSCookie val = (GSCookie)(__security_cookie ^ GetTickCount());
@@ -836,7 +834,9 @@ void EEStartupHelper(COINITIEE fFlags)
         DisableGlobalAllocStore();
 #endif //_DEBUG
 
+#ifndef FEATURE_PAL
         ::SetConsoleCtrlHandler(DbgCtrlCHandler, TRUE/*add*/);
+#endif
 
 #endif // CROSSGEN_COMPILE
 
@@ -982,6 +982,23 @@ void EEStartupHelper(COINITIEE fFlags)
             ClrSleepEx(g_pConfig->StartupDelayMS(), FALSE);
         }
 #endif
+
+#if USE_DISASSEMBLER
+        if ((g_pConfig->GetGCStressLevel() & (EEConfig::GCSTRESS_INSTR_JIT | EEConfig::GCSTRESS_INSTR_NGEN)) != 0)
+        {
+            Disassembler::StaticInitialize();
+            if (!Disassembler::IsAvailable())
+            {
+#ifdef HAVE_GCCOVER
+#ifdef _DEBUG
+                printf("External disassembler is not available. Disabling GCStress for GCSTRESS_INSTR_JIT and GCSTRESS_INSTR_NGEN.\n");
+#endif // _DEBUG
+                g_pConfig->SetGCStressLevel(
+                    g_pConfig->GetGCStressLevel() & ~(EEConfig::GCSTRESS_INSTR_JIT | EEConfig::GCSTRESS_INSTR_NGEN));
+#endif // HAVE_GCCOVER
+            }
+        }
+#endif // USE_DISASSEMBLER
 
         // Monitors, Crsts, and SimpleRWLocks all use the same spin heuristics
         // Cache the (potentially user-overridden) values now so they are accessible from asm routines
@@ -1164,7 +1181,7 @@ void EEStartupHelper(COINITIEE fFlags)
 #endif // PROFILING_SUPPORTED
 
         InitializeExceptionHandling();
-    
+
         //
         // Install our global exception filter
         //
@@ -1350,6 +1367,9 @@ ErrExit: ;
         // for minimal impact we won't update hr for regular builds
         hr = GET_EXCEPTION()->GetHR();
         _ASSERTE(FAILED(hr));
+        StackSString exceptionMessage;
+        GET_EXCEPTION()->GetMessage(exceptionMessage);
+        fprintf(stderr, "%S\n", exceptionMessage.GetUnicode());
 #endif // CROSSGEN_COMPILE
     }
     EX_END_CATCH(RethrowTerminalExceptionsWithInitCheck)
@@ -1421,12 +1441,16 @@ HRESULT EEStartup(COINITIEE fFlags)
 
     _ASSERTE(!g_fEEStarted && !g_fEEInit && SUCCEEDED (g_EEStartupStatus));
 
-#if defined(FEATURE_PAL) && !defined(CROSSGEN_COMPILE)
-    DacGlobals::Initialize();
-#endif
-
     PAL_TRY(COINITIEE *, pfFlags, &fFlags)
     {
+#ifndef CROSSGEN_COMPILE
+#ifdef FEATURE_PAL
+        DacGlobals::Initialize();
+        InitializeJITNotificationTable();
+#endif
+        InitializeClrNotifications();
+#endif // CROSSGEN_COMPILE
+
         EEStartupHelper(*pfFlags);
     }
     PAL_EXCEPT_FILTER (FilterStartupException)
@@ -1951,6 +1975,12 @@ void STDMETHODCALLTYPE EEShutDownHelper(BOOL fIsDllUnloading)
         
         FastInterlockExchange((LONG*)&g_fForbidEnterEE, TRUE);
 
+#if defined(DEBUGGING_SUPPORTED) && defined(FEATURE_PAL)
+        // Terminate the debugging services in the first phase for PAL based platforms
+        // because EEDllMain's DLL_PROCESS_DETACH is NOT going to be called.
+        TerminateDebugger();
+#endif // DEBUGGING_SUPPORTED && FEATURE_PAL
+
         if (g_fProcessDetach)
         {
             ThreadStore::TrapReturningThreads(TRUE);
@@ -2156,6 +2186,10 @@ part2:
                 //
                 // 2) Only when the runtime is processing DLL_PROCESS_DETACH. 
                 CLRRemoveVectoredHandlers();
+
+#if USE_DISASSEMBLER
+                Disassembler::StaticClose();
+#endif // USE_DISASSEMBLER
 
 #ifdef _DEBUG
                 if (_DbgBreakCount)
@@ -2444,7 +2478,7 @@ void STDMETHODCALLTYPE EEShutDown(BOOL fIsDllUnloading)
         // Otherwise, this thread calls EEShutDownHelper directly.  First switch to
         // cooperative mode if this is a managed thread
 #endif
-        if (GetThread())
+    if (GetThread())
     {
         GCX_COOP();
         EEShutDownHelper(fIsDllUnloading);
@@ -2944,9 +2978,9 @@ static BOOL CacheCommandLine(__in LPWSTR pCmdLine, __in_opt LPWSTR* ArgvW)
     }
 
     if (ArgvW != NULL && ArgvW[0] != NULL) {
-        WCHAR wszModuleName[MAX_PATH];
-        WCHAR wszCurDir[MAX_PATH];
-        if (!WszGetCurrentDirectory(MAX_PATH, wszCurDir))
+        WCHAR wszModuleName[MAX_LONGPATH];
+        WCHAR wszCurDir[MAX_LONGPATH];
+        if (!WszGetCurrentDirectory(MAX_LONGPATH, wszCurDir))
             return FALSE;
 
 #ifdef _PREFAST_
@@ -3080,13 +3114,13 @@ BOOL STDMETHODCALLTYPE ExecuteEXE(__in LPWSTR pImageNameIn)
 
     EX_TRY_NOCATCH(LPWSTR, pImageNameInner, pImageNameIn)
     {
-        WCHAR               wzPath[MAX_PATH];
+        WCHAR               wzPath[MAX_LONGPATH];
         DWORD               dwPathLength = 0;
 
         // get the path of executable
-        dwPathLength = WszGetFullPathName(pImageNameInner, MAX_PATH, wzPath, NULL);
+        dwPathLength = WszGetFullPathName(pImageNameInner, MAX_LONGPATH, wzPath, NULL);
 
-        if (!dwPathLength || dwPathLength > MAX_PATH)
+        if (!dwPathLength || dwPathLength > MAX_LONGPATH)
         {
             ThrowWin32( !dwPathLength ? GetLastError() : ERROR_FILENAME_EXCED_RANGE);
         }
@@ -4265,7 +4299,7 @@ static HRESULT InitializeIPCManager(void)
         if (!WszGetModuleFileName(GetModuleInst(), (PWSTR)
                                   g_pIPCManagerInterface->
                                   GetInstancePath(),
-                                  MAX_PATH))
+                                  MAX_LONGPATH))
         {
             hr = HRESULT_FROM_GetLastErrorNA();
         }

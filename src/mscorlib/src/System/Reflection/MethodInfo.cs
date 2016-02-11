@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // 
 
@@ -433,7 +434,7 @@ namespace System.Reflection
 
             // We cannot do simple object identity comparisons for generic methods.
             // Equals will be called in CerHashTable when RuntimeType+RuntimeTypeCache.GetGenericMethodInfo()
-            // retrive items from and insert items into s_methodInstantiations which is a CerHashtable.
+            // retrieve items from and insert items into s_methodInstantiations which is a CerHashtable.
 
             RuntimeMethodInfo mi = obj as RuntimeMethodInfo;
 

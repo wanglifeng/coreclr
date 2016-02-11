@@ -1,5 +1,5 @@
-add_subdirectory(Strike)
 if(WIN32)
-    add_subdirectory(DacTableGen)
-    add_subdirectory(diasdk)
+if(NOT DEFINED CLR_CMAKE_PLATFORM_ARCH_ARM64)
+    add_subdirectory(Strike)
+endif(NOT DEFINED CLR_CMAKE_PLATFORM_ARCH_ARM64)
 endif(WIN32)

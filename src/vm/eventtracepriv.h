@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // File: eventtracepriv.h
 // 
@@ -342,7 +341,7 @@ private:
     void FlushCcw();
 
     // Callback used during handle table enumeration.
-    static void HandleWalkCallback(PTR_UNCHECKED_OBJECTREF pref, LPARAM *pExtraInfo, LPARAM param1, LPARAM param2);
+    static void HandleWalkCallback(PTR_UNCHECKED_OBJECTREF pref, uintptr_t *pExtraInfo, uintptr_t param1, uintptr_t param2);
 
     // Used during CCW enumeration to keep track of all object handles which point to a CCW.
     void AddCcwHandle(Object **handle);
@@ -408,3 +407,14 @@ private:
 
 
 #endif // __EVENTTRACEPRIV_H__
+
+#if defined(FEATURE_EVENTSOURCE_XPLAT)
+class XplatEventSourceLogger
+{
+public:
+    static void QCALLTYPE LogEventSource(__in_z int eventID, __in_z LPCWSTR eventName, __in_z LPCWSTR eventSourceName, __in_z LPCWSTR payload);
+
+    static BOOL QCALLTYPE IsEventSourceLoggingEnabled();
+};
+
+#endif //defined(FEATURE_EVENTSOURCE_XPLAT)

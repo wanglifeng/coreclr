@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ---------------------------------------------------------------------------
 // SString.h  (Safe String)
 // 
@@ -1005,6 +1004,15 @@ typedef InlineSString<512> StackSString;
 // This is a smaller version for when it is known that the string that's going to
 // be needed is small and it's preferable not to take up the stack space.
 typedef InlineSString<32>  SmallStackSString;
+
+// To be used specifically for path strings.
+#ifdef _DEBUG
+// This is a smaller version for debug builds to exercise the buffer allocation path
+typedef InlineSString<32> PathString;
+#else
+// Set it to the current MAX_PATH
+typedef InlineSString<260> PathString;
+#endif
 
 // ================================================================================
 // Quick macro to create an SString around a literal string.

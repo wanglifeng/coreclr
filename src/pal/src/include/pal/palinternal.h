@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -148,6 +147,12 @@ function_name() to call the system's implementation
    compiling PAL implementation files. */
 #include "config.h"
 
+#ifdef DEBUG
+#define _ENABLE_DEBUG_MESSAGES_ 1
+#else
+#define _ENABLE_DEBUG_MESSAGES_ 0
+#endif
+
 #ifdef PAL_PERF
 #include "pal_perf.h"
 #endif
@@ -156,7 +161,9 @@ function_name() to call the system's implementation
    of those functions when including standard C header files */
 #define div DUMMY_div
 #define div_t DUMMY_div_t
+#if !defined(_DEBUG)
 #define memcpy DUMMY_memcpy 
+#endif //!defined(_DEBUG)
 #define memcmp DUMMY_memcmp 
 #define memset DUMMY_memset 
 #define memmove DUMMY_memmove 
@@ -317,7 +324,6 @@ function_name() to call the system's implementation
 #define uintptr_t PAL_uintptr_t
 #define timeval PAL_timeval
 #define FILE PAL_FILE
-#define fpos_t PAL_fpos_t
 
 #include "pal.h"
 
@@ -344,7 +350,9 @@ function_name() to call the system's implementation
 #undef atexit
 #undef div
 #undef div_t
+#if !defined(_DEBUG)
 #undef memcpy
+#endif //!defined(_DEBUG)
 #undef memcmp
 #undef memset
 #undef memmove
@@ -469,7 +477,6 @@ function_name() to call the system's implementation
 #undef intptr_t
 #undef uintptr_t
 #undef timeval
-#undef fpos_t
 
 
 #undef printf
@@ -560,6 +567,7 @@ function_name() to call the system's implementation
 #endif
 #include <ctype.h>
 
+#define _WITH_GETLINE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -677,6 +685,8 @@ inline T* InterlockedCompareExchangePointerT(
 #define InterlockedCompareExchangePointer InterlockedCompareExchangePointerT
 
 #include "volatile.h"
+
+const char StackOverflowMessage[] = "Process is terminated due to StackOverflowException.\n";
 
 #endif // __cplusplus
 

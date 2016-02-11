@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -224,8 +223,8 @@ unsigned int i = 0;
 DWORD dwStart;
 
 /* Variables to capture the file name and the file pointer*/
-char fileName[MAX_PATH];
-char processFileName[MAX_PATH];
+char fileName[MAX_PATH_FNAME];
+char processFileName[MAX_PATH_FNAME];
 FILE *hFile,*hProcessFile;
 struct processStatistics processStats;
 
@@ -247,7 +246,7 @@ if(GetParameters(argc, argv))
 
 
 /*setup file for process result collection */
-_snprintf(processFileName, MAX_PATH, "%d_process_criticalsection_%d_.txt", USE_PROCESS_COUNT, RELATION_ID);
+_snprintf(processFileName, MAX_PATH_FNAME, "%d_process_criticalsection_%d_.txt", USE_PROCESS_COUNT, RELATION_ID);
 hProcessFile = fopen(processFileName, "w+");
 if(hProcessFile == NULL)
     { 
@@ -264,7 +263,7 @@ dwStart = GetTickCount();
 
 //setup file for thread result collection 
 statisticsSize = sizeof(struct statistics);
-_snprintf(fileName, MAX_PATH, "%d_thread_criticalsection_%d_.txt", USE_PROCESS_COUNT, RELATION_ID);
+_snprintf(fileName, MAX_PATH_FNAME, "%d_thread_criticalsection_%d_.txt", USE_PROCESS_COUNT, RELATION_ID);
 hFile = fopen(fileName, "w+");
 if(hFile == NULL)
 { 

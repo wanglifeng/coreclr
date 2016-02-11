@@ -18,6 +18,74 @@ WARNING:   When setting properties based on their current state (for example:
 -->
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
+  <ItemGroup>
+    <CLRTestBatchEnvironmentVariable Condition="'$(CrossGen)' == 'true'" Include="set complus_zaprequire=2" />
+    <CLRTestBatchEnvironmentVariable Condition="'$(CrossGen)' == 'true'" Include="set complus_zaprequireexcludelist=corerun" />
+  </ItemGroup>
+  <!--
+    Target: GetBatchCrossgenScript
+    This returns the portion of the execution script that generates the required lines to crossgen the test executable.
+  -->
+  <Target
+    Condition="'$(CrossGen)'=='true'"
+    Name="GetCrossgenBatchScript"
+    Returns="$(CrossgenBatchScript)">
+    
+    <PropertyGroup>
+<!-- CrossGen will create output if it needs to crossgen. Otherwise there will be silence. -->
+      <CrossgenBatchScript Condition="'$(CLRTestKind)' == 'RunOnly'">
+        <![CDATA[
+if not exist "$([MSBuild]::MakeRelative($(OutputPath), $(_CLRTestToRunFileFullPath)).Replace(".exe", ".ni.exe"))""%CORE_ROOT%\crossgen.exe" /Platform_Assemblies_Paths %CORE_ROOT%%3B. $([MSBuild]::MakeRelative($(OutputPath), $(_CLRTestToRunFileFullPath)))        
+        ]]>
+      </CrossgenBatchScript>
+      <CrossgenBatchScript Condition="'$(CLRTestKind)' == 'BuildAndRun'">
+        <![CDATA[
+if not exist "$(MSBuildProjectName).ni.exe" "%CORE_ROOT%\crossgen.exe" /Platform_Assemblies_Paths %CORE_ROOT%%3B. $(MSBuildProjectName).exe      
+        ]]>
+      </CrossgenBatchScript>
+    </PropertyGroup>
+  </Target>
+
+  <Target
+    Name="GetIlasmRoundTripBatchScript"
+    Returns="$(IlasmRoundTripBatchScript)">
+    <PropertyGroup>
+      <InputAssemblyName Condition="'$(CLRTestKind)' == 'RunOnly'">$([MSBuild]::MakeRelative($(OutputPath), $(_CLRTestToRunFileFullPath)))</InputAssemblyName>
+      <InputAssemblyName Condition="'$(CLRTestKind)' == 'BuildAndRun'">$(MSBuildProjectName).exe</InputAssemblyName>
+      <DisassemblyName>$(MSBuildProjectName).dasm.il</DisassemblyName>
+      <TargetAssemblyName>$(MSBuildProjectName).asm.exe</TargetAssemblyName>
+
+      <!-- If a test is built against mscorlib instead of dotnet Core, permission attributes can be embedded, which CoreCLR does not support. -->
+      <IlasmRoundTrip Condition="'$(ReferenceLocalMscorlib)'!=''">false</IlasmRoundTrip>
+
+       <!-- https://github.com/dotnet/coreclr/issues/2481. Delete /raweh to ildasm once it is resolved.-->
+      <IlasmRoundTripBatchScript Condition="'$(IlasmRoundTrip)'=='true'">
+      <![CDATA[
+ECHO %CORE_ROOT%\ildasm.exe /raweh /out=$(DisassemblyName) $(InputAssemblyName)
+%CORE_ROOT%\ildasm.exe /raweh /out=$(DisassemblyName) $(InputAssemblyName)
+IF NOT "!ERRORLEVEL!"=="0" (
+  ECHO EXECUTION OF ILDASM - FAILED !ERRORLEVEL!
+  Exit /b 1
+)
+ECHO %CORE_ROOT%\ilasm.exe /output=$(TargetAssemblyName) $(_IlasmSwitches) $(DisassemblyName)
+%CORE_ROOT%\ilasm.exe /output=$(TargetAssemblyName) $(_IlasmSwitches) $(DisassemblyName)
+IF NOT "!ERRORLEVEL!"=="0" (
+  ECHO EXECUTION OF ILASM - FAILED !ERRORLEVEL!
+  Exit /b 1
+)
+      ]]>
+      </IlasmRoundTripBatchScript>
+    </PropertyGroup>
+  </Target>
+
+  <!-- This is here because of this bug: http://blogs.msdn.com/b/msbuild/archive/2006/01/03/508629.aspx-->
+  <Target Name="FetchExternalProperties">
+    <!--Call GetExecuteShFullPath to get ToRunProject cmd file Path  -->
+    <MSBuild Projects="$(CLRTestProjectToRun)" Targets="GetExecuteShFullPath" Condition="'$(_CLRTestNeedsProjectToRun)' == 'True'">
+      <Output TaskParameter="TargetOutputs" PropertyName="_CLRTestToRunFileFullPath"/>
+    </MSBuild>
+  </Target>
+  
   <!--
     Target: GetExecuteCmdFullPath
     Return Executed Cmd Relative Full Path
@@ -26,8 +94,15 @@ WARNING:   When setting properties based on their current state (for example:
   <Target
     Name="GetExecuteCmdFullPath"
     Returns="$(ExecuteCmdFullPath)">
-    <PropertyGroup>
-        <ExecuteCmdFullPath>$(OutputPath)\$(AssemblyName).cmd</ExecuteCmdFullPath>
+    <PropertyGroup Condition="$(GenerateRunScript)">
+        <ExecuteCmdFullPath>$(OutputPath)$(MSBuildProjectName).cmd</ExecuteCmdFullPath>
+    </PropertyGroup>
+    <!-- In order to avoid the overhead of calling MSBuild (as it may result in chains of MSBuild calls) I am assuming the extension in this circumstance. -->
+    <PropertyGroup Condition="$(CLRTestProjectToRun) != '' AND $(GenerateRunScript)">
+      <ExecuteCmdFullPath>$(OutputPath)$([System.IO.Path]::GetFilenameWithoutExtension(&quot;$(CLRTestProjectToRun)&quot;)).exe</ExecuteCmdFullPath>
+    </PropertyGroup>
+    <PropertyGroup Condition="!$(GenerateRunScript)">
+        <ExecuteCmdFullPath>$(OutputPath)$(MSBuildProjectName).$(OutputType.ToLower())</ExecuteCmdFullPath>
     </PropertyGroup>
   </Target>
 
@@ -44,17 +119,20 @@ WARNING:   When setting properties based on their current state (for example:
   -->
   <Target Name="GenerateBatchExecutionScript"
     Inputs="$(MSBuildProjectFullPath)"
-    Outputs="$(OutputPath)\$(AssemblyName).cmd">
+    Outputs="$(OutputPath)\$(MSBuildProjectName).cmd"
+    DependsOnTargets="FetchExternalProperties;GetCrossgenBatchScript;GetIlasmRoundTripBatchScript">
+
+    <Message Text="Project depends on $(_CLRTestToRunFileFullPath)." Condition="'$(_CLRTestNeedsProjectToRun)' == 'True'" />
 
     <PropertyGroup>
-    
-      <!-- TODO:2 build in debugger experience support -->
-    
-      <BatchCLRTestExitCodePrep Condition="$(_CLRTestNeedsToRun)"><![CDATA[
+
+      <BatchCLRTestExitCodePrep Condition="$(_CLRTestNeedsToRun)">
+        <![CDATA[
 set CLRTestExpectedExitCode=$(CLRTestExitCode)
 ECHO BEGIN EXECUTION
-      ]]></BatchCLRTestExitCodePrep>
-    
+      ]]>
+      </BatchCLRTestExitCodePrep>
+
       <BatchCLRTestArgPrep Condition=" '$(CLRTestExecutionArguments)'!='' "><![CDATA[
 set CLRTestExecutionArguments=$(CLRTestExecutionArguments) 
       ]]></BatchCLRTestArgPrep>
@@ -76,7 +154,7 @@ IF NOT "%CLRTestExitCode%"=="%CLRTestExpectedExitCode%" (
     </PropertyGroup>
   
     <ItemGroup Condition="$(_CLRTestNeedsToRun)">
-      <Clean Include="$(OutputPath)\$(AssemblyName).cmd"/>
+      <Clean Include="$(OutputPath)\$(MSBuildProjectName).cmd"/>
 
       <BatchCLRTestExecutionScriptArgument Include="debug">
         <HasParam>true</HasParam>
@@ -91,28 +169,61 @@ IF NOT "%CLRTestExitCode%"=="%CLRTestExpectedExitCode%" (
         ]]></Command>
         <Description>Run testcases under debugger.</Description>
       </BatchCLRTestExecutionScriptArgument>
+
+      <BatchCLRTestExecutionScriptArgument Include="env">
+        <HasParam>true</HasParam>
+        <ParamName>envScriptFullPath</ParamName>
+        <Command><![CDATA[
+    IF EXIST "%2" (
+        set __TestEnv=%2
+    ) ELSE (
+        ECHO The environment script "%2" does not exist
+        GOTO :USAGE
+    )
+        ]]></Command>
+        <Description>Run the specified script to set environment variables before running the test.</Description>
+      </BatchCLRTestExecutionScriptArgument>
+
+      <BatchCLRTestExecutionScriptArgument Include="coreroot">
+        <HasParam>true</HasParam>
+        <ParamName>CoreRootFullPath</ParamName>
+        <Command><![CDATA[
+    set CORE_ROOT=%2
+        ]]></Command>
+        <Description>Set CORE_ROOT to the specified value before running the test.</Description>
+      </BatchCLRTestExecutionScriptArgument>
     </ItemGroup>
-  
-    <!--Call GetExecuteCmdFullPath to get ToRunProject cmd file Path  -->
-    <MSBuild Projects="$(CLRTestProjectToRun)" Targets="GetExecuteCmdFullPath" Condition="'$(_CLRTestNeedsProjectToRun)' == 'True'">
-      <Output TaskParameter="TargetOutputs" PropertyName="_CLRTestToRunFileFullPath"/>
-    </MSBuild>
-    
-    <PropertyGroup>
-      <!-- Calculate the thing we're going to run -->
-      <_CLRTestRunFile Condition="'$(_CLRTestNeedsProjectToRun)' != 'True'">"$(AssemblyName).exe"</_CLRTestRunFile>
+      
+    <ItemGroup>
+      <CLRTestBatchEnvironmentVariable Condition="'$(CrossGen)' == 'true' AND '$(_CLRTestNeedsProjectToRun)' == 'true'" Include="set complus_zaprequirelist=$([MSBuild]::MakeRelative($(OutputPath), $(_CLRTestToRunFileFullPath)))" />
+      <CLRTestBatchEnvironmentVariable Condition="'$(CrossGen)' == 'true' AND '$(_CLRTestNeedsProjectToRun)' == 'false'" Include="set complus_zaprequirelist=$(MSBuildProjectName)" />
+    </ItemGroup>
 
-      <!-- TODO: make this better? -->
-      <_CLRTestRunFile Condition=" '$(CLRTestIsHosted)'=='true' And !$(_CLRTestNeedsProjectToRun) ">"%Core_Root%\corerun.exe" $(_CLRTestRunFile)</_CLRTestRunFile>
+    <PropertyGroup> 
+      <_CLRTestRunFile Condition="'$(CLRTestIsHosted)'=='true'">"%CORE_ROOT%\corerun.exe"</_CLRTestRunFile>
+      <BatchCLRTestLaunchCmds Condition=" '$(IlasmRoundTrip)'=='true' "><![CDATA[
+ECHO $(_CLRTestRunFile) $(TargetAssemblyName) %CLRTestExecutionArguments% %Host_Args%
+$(_CLRTestRunFile) $(TargetAssemblyName) %CLRTestExecutionArguments% %Host_Args%
 
-      <BatchCLRTestLaunchCmds Condition=" '$(BatchCLRTestLaunchCmds)'=='' "><![CDATA[
-ECHO $(_CLRTestRunFile) %CLRTestExecutionArguments% %Host_Args%
-%_DebuggerFullPath% $(_CLRTestRunFile) %CLRTestExecutionArguments% %Host_Args%
-set CLRTestExitCode=%ERRORLEVEL%
+IF NOT "!ERRORLEVEL!"=="%CLRTestExpectedExitCode%" (
+  ECHO END EXECUTION OF IL{D}ASM BINARY - FAILED !ERRORLEVEL! vs %CLRTestExpectedExitCode%
+  ECHO FAILED
+  Exit /b 1
+)
       ]]></BatchCLRTestLaunchCmds>
-                
+      <BatchCLRTestLaunchCmds><![CDATA[
+$(BatchCLRTestLaunchCmds)
+ECHO %_DebuggerFullPath% $(_CLRTestRunFile) $(InputAssemblyName) %CLRTestExecutionArguments% %Host_Args%
+%_DebuggerFullPath% $(_CLRTestRunFile) $(InputAssemblyName) %CLRTestExecutionArguments% %Host_Args%
+set CLRTestExitCode=!ERRORLEVEL!
+      ]]></BatchCLRTestLaunchCmds>
     </PropertyGroup>
-     
+    <PropertyGroup>
+      <BatchEnvironmentVariables>
+@(CLRTestBatchEnvironmentVariable -> '%(Identity)', '%0d%0a')
+      </BatchEnvironmentVariables>
+    </PropertyGroup>
+    
     <Message Text="MSBuildProjectDirectory:$(MSBuildProjectDirectory)" />
     <Message Text="_CLRTestToRunFileFullPath:$(_CLRTestToRunFileFullPath)"/>
     <Message Text="_CLRTestRunFile:$(_CLRTestRunFile)" />
@@ -178,24 +289,38 @@ Exit /b 1
 $(BatchCLRTestArgPrep)
       ]]></BatchCLRTestArgPrep>
       <!-- NOTE! semicolons must be escaped with %3B boooo -->
-      <_CLRTestExecutionScriptText><![CDATA[
+      <_CLRTestExecutionScriptText>
+  <![CDATA[
 @ECHO OFF
-setlocal
+setlocal ENABLEDELAYEDEXPANSION
 pushd %~dp0
 $(BatchCLRTestArgPrep)
 $(BatchCLRTestExitCodePrep)
+
+REM The __TestEnv variable may be used to specify something to run before the test.
+IF NOT "%__TestEnv%"=="" call %__TestEnv%
+
+REM Environment Variables
+$(BatchEnvironmentVariables)
+
+REM CrossGen Script (when /p:CrossGen=true)
+$(CrossgenBatchScript)
+
+REM IlasmRoundTrip Script
+$(IlasmRoundTripBatchScript)
+
 REM Precommands
-$(_CLRTestPreCommands)
+$(CLRTestBatchPreCommands)
 REM Launch
 $(BatchCLRTestLaunchCmds)
 REM PostCommands
-$(_CLRTestPostCommands)
+$(CLRTestBatchPostCommands)
 $(BatchCLRTestExitCodeCheck)
       ]]></_CLRTestExecutionScriptText>
     </PropertyGroup>
     <!-- Write the file -->
     <WriteLinesToFile
-      File="$(OutputPath)\$(AssemblyName).cmd"
+      File="$(OutputPath)\$(MSBuildProjectName).cmd"
       Lines="$(_CLRTestExecutionScriptText)"
       Overwrite="true" />
   </Target>

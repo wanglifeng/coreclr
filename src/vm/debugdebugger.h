@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -151,6 +150,8 @@ private:
         void InitPass2();
     };
 
+public:
+
     struct GetStackFramesData {
 
         // Used for the integer-skip version
@@ -186,15 +187,14 @@ private:
         }
     };
 
-
-public:
-
     static FCDECL3(void, 
                    GetStackFramesInternal, 
                    StackFrameHelper* pStackFrameHelper, 
                    INT32 iSkip, 
                    Object* pException
                   );
+
+    static void GetStackFramesFromException(OBJECTREF * e, GetStackFramesData *pData, PTRARRAYREF * pDynamicMethodArray = NULL);
 
 #ifndef DACCESS_COMPILE
 // the DAC directly calls GetStackFramesFromException
@@ -204,8 +204,6 @@ private:
     static void GetStackFramesHelper(Frame *pStartFrame, void* pStopStack, GetStackFramesData *pData);
 
     static void GetStackFrames(Frame *pStartFrame, void* pStopStack, GetStackFramesData *pData);    
-
-    static void GetStackFramesFromException(OBJECTREF * e, GetStackFramesData *pData, PTRARRAYREF * pDynamicMethodArray = NULL);
 
     static StackWalkAction GetStackFramesCallback(CrawlFrame* pCf, VOID* data);
 

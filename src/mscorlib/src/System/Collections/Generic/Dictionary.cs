@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -105,6 +106,22 @@ namespace System.Collections.Generic {
 
             if( dictionary == null) {
                 ThrowHelper.ThrowArgumentNullException(ExceptionArgument.dictionary);
+            }
+
+            // It is likely that the passed-in dictionary is Dictionary<TKey,TValue>. When this is the case,
+            // avoid the enumerator allocation and overhead by looping through the entries array directly.
+            // We only do this when dictionary is Dictionary<TKey,TValue> and not a subclass, to maintain
+            // back-compat with subclasses that may have overridden the enumerator behavior.
+            if (dictionary.GetType() == typeof(Dictionary<TKey,TValue>)) {
+                Dictionary<TKey,TValue> d = (Dictionary<TKey,TValue>)dictionary;
+                int count = d.count;
+                Entry[] entries = d.entries;
+                for (int i = 0; i < count; i++) {
+                    if (entries[i].hashCode >= 0) {
+                        Add(entries[i].key, entries[i].value);
+                    }
+                }
+                return;
             }
 
             foreach (KeyValuePair<TKey,TValue> pair in dictionary) {
@@ -330,7 +347,11 @@ namespace System.Collections.Generic {
             for (int i = buckets[targetBucket]; i >= 0; i = entries[i].next) {
                 if (entries[i].hashCode == hashCode && comparer.Equals(entries[i].key, key)) {
                     if (add) { 
+#if FEATURE_CORECLR
+                        ThrowHelper.ThrowAddingDuplicateWithKeyArgumentException(key);
+#else
                         ThrowHelper.ThrowArgumentException(ExceptionResource.Argument_AddingDuplicate);
+#endif
                     }
                     entries[i].value = value;
                     version++;

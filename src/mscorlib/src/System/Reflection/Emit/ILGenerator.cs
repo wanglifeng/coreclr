@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // 
 
@@ -1174,6 +1175,17 @@ namespace System.Reflection.Emit
             this.Emit(OpCodes.Throw);
         }
 
+        private static Type GetConsoleType()
+        {
+#if FEATURE_LEGACYSURFACE
+            return typeof(Console);
+#else
+            return Type.GetType(
+                "System.Console, System.Console, Version=4.0.0.0, Culture=neutral, PublicKeyToken=" + AssemblyRef.MicrosoftPublicKeyToken, 
+                throwOnError: true);
+#endif
+        }
+
         public virtual void EmitWriteLine(String value)
         {
             // Emits the IL to call Console.WriteLine with a string.
@@ -1181,7 +1193,7 @@ namespace System.Reflection.Emit
             Emit(OpCodes.Ldstr, value);
             Type[] parameterTypes = new Type[1];
             parameterTypes[0] = typeof(String);
-            MethodInfo mi = typeof(Console).GetMethod("WriteLine", parameterTypes);
+            MethodInfo mi = GetConsoleType().GetMethod("WriteLine", parameterTypes);
             Emit(OpCodes.Call, mi);
         }
 
@@ -1198,7 +1210,7 @@ namespace System.Reflection.Emit
                 throw new ArgumentException(Environment.GetResourceString("InvalidOperation_BadILGeneratorUsage"));
             }
 
-            MethodInfo prop = typeof(Console).GetMethod("get_Out");
+            MethodInfo prop = GetConsoleType().GetMethod("get_Out");
             Emit(OpCodes.Call, prop);
             Emit(OpCodes.Ldloc, localBuilder);
             Type[] parameterTypes = new Type[1];
@@ -1230,7 +1242,7 @@ namespace System.Reflection.Emit
             }
             Contract.EndContractBlock();
             
-            MethodInfo prop = typeof(Console).GetMethod("get_Out");
+            MethodInfo prop = GetConsoleType().GetMethod("get_Out");
             Emit(OpCodes.Call, prop);
 
             if ((fld.Attributes & FieldAttributes.Static)!=0) {

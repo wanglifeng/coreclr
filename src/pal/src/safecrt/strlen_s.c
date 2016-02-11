@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /***
 *strlen_s.c - contains strnlen() routine
@@ -47,7 +46,7 @@ size_t __cdecl strnlen(const char *str, size_t maxsize)
 {
     size_t n;
 
-    /* Note that we do not check if s == NULL, because we do not
+    /* Note that we do not check if str == NULL, because we do not
      * return errno_t...
      */
 

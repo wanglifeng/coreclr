@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*============================================================
 **
@@ -17,7 +16,7 @@
 **          - Waiting on a Mutex that a thread already owns does
 **            not block.
 **          - Create Named mutex with empty string ("")
-**          - Create Named mutex with string of MAX_PATH length
+**          - Create Named mutex with string of MAX_LONGPATH length
 **          - Calling RelaseMutex with invalid Mutex handles and
 **            valid but unowned Mutexes.
 **
@@ -83,12 +82,12 @@ int __cdecl main (int argc, char **argv)
 
 
     /*
-     * Test named Mutexes with string of length MAX_PATH
+     * Test named Mutexes with string of length MAX_LONGPATH
      */
 
-    szMaxPath = (char *)malloc(MAX_PATH+2);
-    memset(szMaxPath, 'A', MAX_PATH-60);
-    szMaxPath[MAX_PATH-60] = 0;
+    szMaxPath = (char *)malloc(MAX_LONGPATH+2);
+    memset(szMaxPath, 'A', MAX_LONGPATH-60);
+    szMaxPath[MAX_LONGPATH-60] = 0;
 
     if (!TestNamedMutex(szMaxPath))
     {

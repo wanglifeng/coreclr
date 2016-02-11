@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 
@@ -31,6 +30,8 @@
 #include "../binder/inc/clrprivbindercoreclr.h"
 #endif
 
+#include "clr/fs/path.h"
+using namespace clr::fs;
 
 //************************************************************************
 inline AppDomain *AppDomainNative::ValidateArg(APPDOMAINREF pThis)
@@ -536,7 +537,7 @@ INT32 AppDomainNative::ExecuteAssemblyHelper(Assembly* pAssembly,
 
     EE_TRY_FOR_FINALLY(Param *, pParam, &param)
     {
-        pParam->iRetVal = pParam->pAssembly->ExecuteMainMethod(pParam->pStringArgs);
+        pParam->iRetVal = pParam->pAssembly->ExecuteMainMethod(pParam->pStringArgs, FALSE /* waitForOtherThreads */);
     }
     EE_FINALLY 
     {
@@ -1578,7 +1579,7 @@ void QCALLTYPE AppDomainNative::SetNativeDllSearchDirectories(__in_z LPCWSTR wsz
         while (itr != end)
         {
             start = itr;
-            BOOL found = sDirectories.Find(itr, W(';'));
+            BOOL found = sDirectories.Find(itr, PATH_SEPARATOR_CHAR_W);
             if (!found)
             {
                 itr = end;
@@ -1595,9 +1596,9 @@ void QCALLTYPE AppDomainNative::SetNativeDllSearchDirectories(__in_z LPCWSTR wsz
 
             if (len > 0)
             {
-                if (qualifiedPath[len-1]!='\\')
+                if (qualifiedPath[len - 1] != DIRECTORY_SEPARATOR_CHAR_W)
                 {
-                    qualifiedPath.Append('\\');
+                    qualifiedPath.Append(DIRECTORY_SEPARATOR_CHAR_W);
                 }
 
                 NewHolder<SString> stringHolder (new SString(qualifiedPath));
