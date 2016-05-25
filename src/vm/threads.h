@@ -3625,7 +3625,7 @@ public:
     static UINT_PTR VirtualUnwindCallFrame(PREGDISPLAY pRD, EECodeInfo * pCodeInfo = NULL);
     static PCODE VirtualUnwindLeafCallFrame(T_CONTEXT* pContext);
     static PCODE VirtualUnwindNonLeafCallFrame(T_CONTEXT* pContext, T_KNONVOLATILE_CONTEXT_POINTERS* pContextPointers = NULL,
-        PRUNTIME_FUNCTION pFunctionEntry = NULL, UINT_PTR uImageBase = NULL);
+        PT_RUNTIME_FUNCTION pFunctionEntry = NULL, UINT_PTR uImageBase = NULL);
     static UINT_PTR VirtualUnwindToFirstManagedCallFrame(T_CONTEXT* pContext);
 #endif // WIN64EXCEPTIONS
 
@@ -4099,7 +4099,7 @@ private:
 
 private:
     // Set once on initialization, single-threaded, inside friend code:InitThreadManager,
-    // based on whether the user has set COMPLUS_EnforceEEThreadNotRequiredContracts.
+    // based on whether the user has set COMPlus_EnforceEEThreadNotRequiredContracts.
     // This is then later accessed via public
     // code:Thread::ShouldEnforceEEThreadNotRequiredContracts. See
     // code:GetThreadGenericFullCheck for details.
@@ -5546,11 +5546,11 @@ public:
     // object associated with them (e.g., the bgc thread).
     void SetGCSpecial(bool fGCSpecial);
 
-#if !defined(FEATURE_CORECLR)
+#ifndef FEATURE_PAL
 private:
     WORD m_wCPUGroup;
     DWORD_PTR m_pAffinityMask;
-#endif
+#endif // !FEATURE_PAL
 
 public:
     void ChooseThreadCPUGroupAffinity();
@@ -7764,7 +7764,7 @@ struct ThreadLocalInfo
     AppDomain* m_pAppDomain;
     void** m_EETlsData; // ClrTlsInfo::data
 #ifdef FEATURE_MERGE_JIT_AND_ENGINE
-    Compiler* m_pCompiler;
+    void* m_pJitTls;
 #endif
 };
 #endif // FEATURE_IMPLICIT_TLS

@@ -92,10 +92,10 @@ public:
     //         This class has two purposes - to abstract the implementation and to validate the ValueNums
     //         being stored or retrieved.
     template <class fromType, class keyfuncs=LargePrimitiveKeyFuncs<fromType>> 
-        class VNMap : public SimplerHashTable<fromType, keyfuncs, ValueNum, DefaultSimplerHashBehavior>
+        class VNMap : public SimplerHashTable<fromType, keyfuncs, ValueNum, JitSimplerHashBehavior>
     {
     public:
-        VNMap(IAllocator* alloc) : SimplerHashTable<fromType, keyfuncs, ValueNum, DefaultSimplerHashBehavior>(alloc) {}
+        VNMap(IAllocator* alloc) : SimplerHashTable<fromType, keyfuncs, ValueNum, JitSimplerHashBehavior>(alloc) {}
         ~VNMap()
         {
             ~VNMap<fromType, keyfuncs>::SimplerHashTable();
@@ -104,11 +104,11 @@ public:
         bool Set(fromType k, ValueNum val)
         {
             assert(val != RecursiveVN);
-            return SimplerHashTable<fromType, keyfuncs, ValueNum, DefaultSimplerHashBehavior>::Set(k, val);
+            return SimplerHashTable<fromType, keyfuncs, ValueNum, JitSimplerHashBehavior>::Set(k, val);
         }
         bool Lookup(fromType k, ValueNum* pVal = NULL) const
         {
-            bool result = SimplerHashTable<fromType, keyfuncs, ValueNum, DefaultSimplerHashBehavior>::Lookup(k, pVal);
+            bool result = SimplerHashTable<fromType, keyfuncs, ValueNum, JitSimplerHashBehavior>::Lookup(k, pVal);
             assert(!result || *pVal != RecursiveVN);
             return result;
         }
@@ -214,7 +214,7 @@ private:
 #ifdef DEBUG
     // This helps test some performance pathologies related to "evaluation" of VNF_MapSelect terms,
     // especially relating to the heap.  We count the number of applications of such terms we consider,
-    // and if this exceeds a limit, indicated by a COMPLUS_ variable, we assert.
+    // and if this exceeds a limit, indicated by a COMPlus_ variable, we assert.
     unsigned m_numMapSels;
 #endif
 
@@ -340,7 +340,7 @@ public:
     // Returns the VN representing the union of the two exception sets "xs0" and "xs1".
     // These must be VNForEmtpyExcSet() or applications of VNF_ExcSetCons, obeying
     // the ascending order invariant (which is preserved in the result.)
-    ValueNum VNExcSetUnion(ValueNum xs0, ValueNum xs1 DEBUG_ARG(bool topLevel = true));
+    ValueNum VNExcSetUnion(ValueNum xs0, ValueNum xs1 DEBUGARG(bool topLevel = true));
 
     ValueNumPair VNPExcSetUnion(ValueNumPair xs0vnp, ValueNumPair xs1vnp);
 
@@ -584,7 +584,7 @@ public:
     };
 
     // Check if "vn" is "new [] (type handle, size)"
-    bool IsVNNewArr(ValueNum vn);
+    bool IsVNNewArr(ValueNum vn, VNFuncApp* funcApp);
 
     // Check if "vn" IsVNNewArr and return <= 0 if arr size cannot be determined, else array size.
     int GetNewArrSize(ValueNum vn);
@@ -1215,15 +1215,15 @@ FORCEINLINE T ValueNumStore::SafeGetConstantValue(Chunk* c, unsigned offset)
     case TYP_REF:
         return CoerceTypRefToT<T>(c, offset);
     case TYP_BYREF:
-        return (T) reinterpret_cast<VarTypConv<TYP_BYREF>::Type*>(c->m_defs)[offset];
+        return static_cast<T>(reinterpret_cast<VarTypConv<TYP_BYREF>::Type*>(c->m_defs)[offset]);
     case TYP_INT:
-        return (T) reinterpret_cast<VarTypConv<TYP_INT>::Type*>(c->m_defs)[offset];
+        return static_cast<T>(reinterpret_cast<VarTypConv<TYP_INT>::Type*>(c->m_defs)[offset]);
     case TYP_LONG:
-        return (T) reinterpret_cast<VarTypConv<TYP_LONG>::Type*>(c->m_defs)[offset];
+        return static_cast<T>(reinterpret_cast<VarTypConv<TYP_LONG>::Type*>(c->m_defs)[offset]);
     case TYP_FLOAT:
-        return (T) reinterpret_cast<VarTypConv<TYP_FLOAT>::Lang*>(c->m_defs)[offset];
+        return static_cast<T>(reinterpret_cast<VarTypConv<TYP_FLOAT>::Lang*>(c->m_defs)[offset]);
     case TYP_DOUBLE:
-        return (T) reinterpret_cast<VarTypConv<TYP_DOUBLE>::Lang*>(c->m_defs)[offset];
+        return static_cast<T>(reinterpret_cast<VarTypConv<TYP_DOUBLE>::Lang*>(c->m_defs)[offset]);
     default:
         assert(false);
         return (T)0;
@@ -1251,22 +1251,16 @@ inline bool ValueNumStore::VNFuncIsComparison(VNFunc vnf)
     return GenTree::OperIsCompare(gtOp) != 0;
 }
 
+template <>
+inline size_t ValueNumStore::CoerceTypRefToT(Chunk* c, unsigned offset)
+{
+    return reinterpret_cast<size_t>(reinterpret_cast<VarTypConv<TYP_REF>::Type*>(c->m_defs)[offset]);
+}
+
 template <typename T>
 inline T ValueNumStore::CoerceTypRefToT(Chunk* c, unsigned offset)
 {
     noway_assert(sizeof(T) >= sizeof(VarTypConv<TYP_REF>::Type));
-    return (T) reinterpret_cast<VarTypConv<TYP_REF>::Type*>(c->m_defs)[offset];
-}
-
-template <>
-inline float ValueNumStore::CoerceTypRefToT<float>(Chunk* c, unsigned offset)
-{
-    unreached();
-}
-
-template <>
-inline double ValueNumStore::CoerceTypRefToT<double>(Chunk* c, unsigned offset)
-{
     unreached();
 }
 

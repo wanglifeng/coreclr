@@ -23,6 +23,7 @@ Revision History:
 #define _PAL_FILE_H_
 
 #include "pal/shmemory.h"
+#include "pal/stackstring.hpp"
 #include <sys/types.h>
 #include <dirent.h>
 
@@ -158,21 +159,6 @@ Close promary handles for stdin, stdout and stderr
 void FILECleanupStdHandles(void);
 
 /*++
-FILEGetFileNameFromSymLink
-
-Input paramters:
-
-source  = path to the file on input, path to the file with all 
-          symbolic links traversed on return
-
-Note: Assumes the maximum size of the source is MAX_LONGPATH
-
-Return value:
-    TRUE on success, FALSE on failure
---*/
-BOOL FILEGetFileNameFromSymLink(char *source);
-
-/*++
 
 Function : 
     FILEGetProperNotFoundError
@@ -183,7 +169,7 @@ Windows behavoir.
     IN LPSTR lpPath - The path to check.
     LPDWORD lpErrorCode - The error to set.
 */
-void FILEGetProperNotFoundError( LPSTR lpPath, LPDWORD lpErrorCode );
+void FILEGetProperNotFoundError( LPCSTR lpPath, LPDWORD lpErrorCode );
 
 /*++
 PAL__getcwd
@@ -228,20 +214,6 @@ Return value:
     file descriptor of opened file on success, -1 on failure.
 --*/
 int __cdecl PAL_mkstemp(char *szNameTemplate);
-
-/*++
-PAL_unlink
-
-Calls unlink. 
-
-Input parameters:
-
-szPath = a symbolic link or a hard link to a file
-
-Return value:
-    Returns 0 on success and -1 on failure
---*/
-int __cdecl PAL_unlink(const char *szPath);
 
 /*++
 PAL_rename

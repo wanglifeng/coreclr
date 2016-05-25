@@ -127,9 +127,7 @@ namespace System
 
         public IntPtr Value
         {
-#if !FEATURE_LEGACYNETCF
             [SecurityCritical]
-#endif
             get
             {
                 return m_type != null ? m_type.m_handle : IntPtr.Zero;
@@ -536,24 +534,18 @@ namespace System
         [DllImport(JitHelpers.QCall, CharSet = CharSet.Unicode)]
         [SuppressUnmanagedCodeSecurity]
         private extern static void GetTypeByName(string name, bool throwOnError, bool ignoreCase, bool reflectionOnly, StackCrawlMarkHandle stackMark, 
-#if FEATURE_HOSTED_BINDER
             IntPtr pPrivHostBinder,
-#endif
-            bool loadTypeFromPartialName, ObjectHandleOnStack type);
+            bool loadTypeFromPartialName, ObjectHandleOnStack type, ObjectHandleOnStack keepalive);
 
-#if FEATURE_HOSTED_BINDER
         // Wrapper function to reduce the need for ifdefs.
         internal static RuntimeType GetTypeByName(string name, bool throwOnError, bool ignoreCase, bool reflectionOnly, ref StackCrawlMark stackMark, bool loadTypeFromPartialName)
         {
             return GetTypeByName(name, throwOnError, ignoreCase, reflectionOnly, ref stackMark, IntPtr.Zero, loadTypeFromPartialName);
         }
-#endif
 
         [System.Security.SecuritySafeCritical]  // auto-generated
         internal static RuntimeType GetTypeByName(string name, bool throwOnError, bool ignoreCase, bool reflectionOnly, ref StackCrawlMark stackMark,
-#if FEATURE_HOSTED_BINDER
                                                   IntPtr pPrivHostBinder,
-#endif
                                                   bool loadTypeFromPartialName)
         {
             if (name == null || name.Length == 0)
@@ -566,12 +558,12 @@ namespace System
 
             RuntimeType type = null;
 
+            Object keepAlive = null;
             GetTypeByName(name, throwOnError, ignoreCase, reflectionOnly,
                 JitHelpers.GetStackCrawlMarkHandle(ref stackMark),
-#if FEATURE_HOSTED_BINDER
                 pPrivHostBinder,
-#endif
-                loadTypeFromPartialName, JitHelpers.GetObjectHandleOnStack(ref type));
+                loadTypeFromPartialName, JitHelpers.GetObjectHandleOnStack(ref type), JitHelpers.GetObjectHandleOnStack(ref keepAlive));
+            GC.KeepAlive(keepAlive);
 
             return type;
         }
@@ -675,19 +667,9 @@ namespace System
         [System.Security.SecuritySafeCritical]  // auto-generated
         internal RuntimeType MakeByRef()
         {
-#if FEATURE_LEGACYNETCF
-            try {
-#endif
-                RuntimeType type = null;
-                MakeByRef(GetNativeHandle(), JitHelpers.GetObjectHandleOnStack(ref type));
-                return type;
-#if FEATURE_LEGACYNETCF
-            } catch(Exception) {
-                if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8)
-                    return null;
-                throw;
-            }
-#endif
+            RuntimeType type = null;
+            MakeByRef(GetNativeHandle(), JitHelpers.GetObjectHandleOnStack(ref type));
+            return type;
         }
        
         [System.Security.SecurityCritical]  // auto-generated
@@ -937,7 +919,7 @@ namespace System
     }                                       
 
     [Serializable]
-[System.Runtime.InteropServices.ComVisible(true)]
+    [System.Runtime.InteropServices.ComVisible(true)]
     public unsafe struct RuntimeMethodHandle : ISerializable
     {
         // Returns handle for interop with EE. The handle is guaranteed to be non-null.
@@ -1006,11 +988,7 @@ namespace System
 
         public IntPtr Value
         {
-#if FEATURE_LEGACYNETCF
-            [SecuritySafeCritical]
-#else
             [SecurityCritical]
-#endif
             get
             {
                 return m_value != null ? m_value.Value.Value : IntPtr.Zero;
@@ -1196,6 +1174,7 @@ namespace System
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         static extern internal uint GetSpecialSecurityFlags(IRuntimeMethodInfo method);
 
+#if !FEATURE_CORECLR
         [System.Security.SecurityCritical]  // auto-generated
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         static extern internal void PerformSecurityCheck(Object obj, RuntimeMethodHandleInternal method, RuntimeType parent, uint invocationFlags);
@@ -1207,6 +1186,7 @@ namespace System
             GC.KeepAlive(method);
             return;
         }
+#endif //!FEATURE_CORECLR
         #endregion
 
         [System.Security.SecuritySafeCritical]  // auto-generated
@@ -1514,11 +1494,7 @@ namespace System
 
         public IntPtr Value
         {
-#if FEATURE_LEGACYNETCF
-            [SecuritySafeCritical]
-#else
             [SecurityCritical]
-#endif
             get
             {
                 return m_ptr != null ? m_ptr.Value.Value : IntPtr.Zero;
@@ -2083,12 +2059,6 @@ namespace System
         [System.Security.SecuritySafeCritical]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]
         internal static extern bool CompareSig(Signature sig1, Signature sig2);
-
-#if FEATURE_LEGACYNETCF
-        [System.Security.SecuritySafeCritical]
-        [MethodImplAttribute(MethodImplOptions.InternalCall)]
-        internal static extern bool CompareSigForAppCompat(Signature left, RuntimeType typeLeft, Signature right, RuntimeType typeRight); 
-#endif
 
         [System.Security.SecuritySafeCritical]
         [MethodImplAttribute(MethodImplOptions.InternalCall)]

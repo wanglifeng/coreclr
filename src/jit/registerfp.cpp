@@ -229,7 +229,7 @@ void CodeGen::genFloatSimple(GenTree *tree, RegSet::RegisterPreference *pref)
             genCodeForTreeFloat(op1, pref);
 
             inst_RV_TT(ins_FloatConv(tree->TypeGet(), op1->TypeGet()), REG_FLOATRET, op1);
-            if (compiler->info.compIsVarArgs)
+            if (compiler->info.compIsVarArgs || compiler->opts.compUseSoftFP)
             {
                 if (tree->TypeGet() == TYP_FLOAT)
                 {
@@ -314,7 +314,8 @@ void CodeGen::genFloatCheckFinite(GenTree *tree, RegSet::RegisterPreference *pre
     inst_RV_IV(INS_cmp, reg, expMask, EA_4BYTE);
 
     // If exponent was all 1's, we need to throw ArithExcep
-    genJumpToThrowHlpBlk(EJ_je, SCK_ARITH_EXCPN);
+    emitJumpKind jmpEqual = genJumpKindForOper(GT_EQ, CK_SIGNED);
+    genJumpToThrowHlpBlk(jmpEqual, SCK_ARITH_EXCPN);
 
     genCodeForTreeFloat_DONE(tree, op1->gtRegNum);
 }

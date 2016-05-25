@@ -21,8 +21,7 @@ struct ErrorTrapParam
     ErrorTrapParam() { jitInfo = NULL; }
 };
 
-extern  LONG            __EEfilter(PEXCEPTION_POINTERS pExceptionPointers, LPVOID lpvParam);
-        // Only catch JIT internal errors (will not catch EE generated Errors)
+// Only catch JIT internal errors (will not catch EE generated Errors)
 extern  LONG            __JITfilter(PEXCEPTION_POINTERS pExceptionPointers, LPVOID lpvParam);
 
 #define                 setErrorTrap(compHnd, ParamType, paramDef, paramRef) \
@@ -37,19 +36,12 @@ extern  LONG            __JITfilter(PEXCEPTION_POINTERS pExceptionPointers, LPVO
     {                                                                       \
         ParamType paramDef = __JITpParam->param;
 
-        // Catch only JitGeneratedErrors
+// Only catch JIT internal errors (will not catch EE generated Errors)
 #define                 impJitErrorTrap()                                   \
     }                                                                       \
     PAL_EXCEPT_FILTER(__JITfilter)                                          \
     {                                                                       \
         int __errc = __JITparam.errc; (void) __errc;
-
-        // Catch all errors (including recoverable ones from the EE)
-#define                 impErrorTrap()                                      \
-    }                                                                       \
-    PAL_EXCEPT_FILTER(__EEfilter)                                           \
-    {                                                                       \
-        __JITparam.jitInfo->HandleException(&__JITparam.exceptionPointers);
 
 #define                 endErrorTrap()                                      \
     }                                                                       \
@@ -92,7 +84,7 @@ extern void notYetImplemented(const char * msg, const char * file, unsigned line
 
 #ifdef _TARGET_AMD64_
 
-#define NYI_AMD64(msg)    notYetImplemented("NYI: " # msg, __FILE__, __LINE__)
+#define NYI_AMD64(msg)    notYetImplemented("NYI_AMD64: " # msg, __FILE__, __LINE__)
 #define NYI_X86(msg)      do { } while (0)
 #define NYI_ARM(msg)      do { } while (0)
 #define NYI_ARM64(msg)    do { } while (0)
@@ -100,7 +92,7 @@ extern void notYetImplemented(const char * msg, const char * file, unsigned line
 #elif defined(_TARGET_X86_)
 
 #define NYI_AMD64(msg)    do { } while (0)
-#define NYI_X86(msg)      notYetImplemented("NYI: " # msg, __FILE__, __LINE__)
+#define NYI_X86(msg)      notYetImplemented("NYI_X86: " # msg, __FILE__, __LINE__)
 #define NYI_ARM(msg)      do { } while (0)
 #define NYI_ARM64(msg)    do { } while (0)
 
@@ -108,7 +100,7 @@ extern void notYetImplemented(const char * msg, const char * file, unsigned line
 
 #define NYI_AMD64(msg)    do { } while (0)
 #define NYI_X86(msg)      do { } while (0)
-#define NYI_ARM(msg)      notYetImplemented("NYI: " # msg, __FILE__, __LINE__)
+#define NYI_ARM(msg)      notYetImplemented("NYI_ARM: " # msg, __FILE__, __LINE__)
 #define NYI_ARM64(msg)    do { } while (0)
 
 #elif defined(_TARGET_ARM64_)
@@ -116,7 +108,7 @@ extern void notYetImplemented(const char * msg, const char * file, unsigned line
 #define NYI_AMD64(msg)    do { } while (0)
 #define NYI_X86(msg)      do { } while (0)
 #define NYI_ARM(msg)      do { } while (0)
-#define NYI_ARM64(msg)    notYetImplemented("NYI: " # msg, __FILE__, __LINE__)
+#define NYI_ARM64(msg)    notYetImplemented("NYI_ARM64: " # msg, __FILE__, __LINE__)
 
 #else
 

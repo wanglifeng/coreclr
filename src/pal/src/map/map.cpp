@@ -24,6 +24,7 @@ Abstract:
 #include "pal/init.h"
 #include "pal/critsect.h"
 #include "pal/virtual.h"
+#include "pal/environ.h"
 #include "common.h"
 #include "pal/map.hpp"
 #include "pal/thread.hpp"
@@ -133,7 +134,7 @@ CObjectType CorUnix::otFileMapping(
                 PAGE_READWRITE | PAGE_READONLY | PAGE_WRITECOPY,
                 CObjectType::SecuritySupported,
                 CObjectType::SecurityInfoNotPersisted,
-                CObjectType::ObjectCanHaveName,
+                CObjectType::UnnamedObject,
                 CObjectType::LocalDuplicationOnly,
                 CObjectType::UnwaitableObject,
                 CObjectType::SignalingNotApplicable,
@@ -2288,6 +2289,7 @@ void * MAPMapPEFile(HANDLE hFile)
     void * retval;
 #if _DEBUG
     bool forceRelocs = false;
+    char* envVar;
 #endif
 
     ENTRY("MAPMapPEFile (hFile=%p)\n", hFile);
@@ -2393,13 +2395,18 @@ void * MAPMapPEFile(HANDLE hFile)
     }
 
 #if _DEBUG
-    char * envVar;
-    envVar = getenv("PAL_ForceRelocs");
-    if (envVar && strlen(envVar) > 0)
+    envVar = EnvironGetenv("PAL_ForceRelocs");
+    if (envVar)
     {
-        forceRelocs = true;
-        TRACE_(LOADER)("Forcing rebase of image\n");
+        if (strlen(envVar) > 0)
+        {
+            forceRelocs = true;
+            TRACE_(LOADER)("Forcing rebase of image\n");
+        }
+
+        InternalFree(envVar);
     }
+
     void * pForceRelocBase;
     pForceRelocBase = NULL;
     if (forceRelocs)
@@ -2432,9 +2439,16 @@ void * MAPMapPEFile(HANDLE hFile)
 #if !defined(_AMD64_)
     loadedBase = mmap((void*)preferredBase, virtualSize, PROT_NONE, MAP_ANON, -1, 0);
 #else // defined(_AMD64_)    
-    // MAC64 requires we pass MAP_SHARED (or MAP_PRIVATE) flags - otherwise, the call is failed. 
-    // Refer to mmap documentation at http://www.manpagez.com/man/2/mmap/ for details.
-    loadedBase = mmap((void*)preferredBase, virtualSize, PROT_NONE, MAP_ANON|MAP_PRIVATE, -1, 0);
+    // First try to reserve virtual memory using ExecutableAllcator. This allows all PE images to be
+    // near each other and close to the coreclr library which also allows the runtime to generate
+    // more efficient code (by avoiding usage of jump stubs).
+    loadedBase = ReserveMemoryFromExecutableAllocator(virtualSize);
+    if (loadedBase == NULL)
+    {
+        // MAC64 requires we pass MAP_SHARED (or MAP_PRIVATE) flags - otherwise, the call is failed.
+        // Refer to mmap documentation at http://www.manpagez.com/man/2/mmap/ for details.
+        loadedBase = mmap((void*)preferredBase, virtualSize, PROT_NONE, MAP_ANON|MAP_PRIVATE, -1, 0);
+    }
 #endif // !defined(_AMD64_)
 
     if (MAP_FAILED == loadedBase)

@@ -73,7 +73,7 @@ GTNODE(IND              , "indir"         ,0,GTK_UNOP)          // load indirect
 GTNODE(STOREIND         , "storeIndir"    ,0,GTK_BINOP)         // store indirection
                                                                    // TODO-Cleanup: GT_ARR_BOUNDS_CHECK should be made a GTK_BINOP now that it has only two child nodes
 GTNODE(ARR_BOUNDS_CHECK , "arrBndsChk"    ,0,GTK_SPECIAL)       // array bounds check
-GTNODE(LDOBJ            , "ldobj"         ,0,GTK_UNOP|GTK_EXOP)
+GTNODE(OBJ              , "obj"           ,0,GTK_UNOP|GTK_EXOP)
 GTNODE(BOX              , "box"           ,0,GTK_UNOP|GTK_EXOP)
 
 #ifdef FEATURE_SIMD
@@ -94,8 +94,8 @@ GTNODE(MUL        , "*"          ,1,GTK_BINOP)
 GTNODE(DIV        , "/"          ,0,GTK_BINOP)
 GTNODE(MOD        , "%"          ,0,GTK_BINOP)
 
-GTNODE(UDIV       , "/"          ,0,GTK_BINOP)
-GTNODE(UMOD       , "%"          ,0,GTK_BINOP)
+GTNODE(UDIV       , "un-/"       ,0,GTK_BINOP)
+GTNODE(UMOD       , "un-%"       ,0,GTK_BINOP)
 
 GTNODE(OR         , "|"          ,1,GTK_BINOP|GTK_LOGOP)
 GTNODE(XOR        , "^"          ,1,GTK_BINOP|GTK_LOGOP)
@@ -148,16 +148,16 @@ GTNODE(LEA        , "lea"        ,0,GTK_BINOP|GTK_EXOP)
 // of its two (lower and upper half) operands.  Some GT_LONG nodes are transient,
 // during the decomposing of longs; others are handled by codegen as operands of
 // nodes such as calls, returns and stores of long lclVars.
-GTNODE(LONG       , "long"       ,0,GTK_BINOP)
+GTNODE(LONG       , "gt_long"    ,0,GTK_BINOP)
 
 // The following are nodes representing the upper half of a 64-bit operation
 // that requires a carry/borrow.  However, they are all named GT_XXX_HI for
 // consistency.
-GTNODE(ADD_HI     , "+Hi"          ,1,GTK_BINOP|GTK_EXOP)
-GTNODE(SUB_HI     , "-Hi"          ,0,GTK_BINOP|GTK_EXOP)
-GTNODE(MUL_HI     , "*Hi"          ,1,GTK_BINOP|GTK_EXOP)
-GTNODE(DIV_HI     , "/Hi"          ,0,GTK_BINOP|GTK_EXOP)
-GTNODE(MOD_HI     , "%Hi"          ,0,GTK_BINOP|GTK_EXOP)
+GTNODE(ADD_HI     , "+Hi"          ,1,GTK_BINOP)
+GTNODE(SUB_HI     , "-Hi"          ,0,GTK_BINOP)
+GTNODE(MUL_HI     , "*Hi"          ,1,GTK_BINOP)
+GTNODE(DIV_HI     , "/Hi"          ,0,GTK_BINOP)
+GTNODE(MOD_HI     , "%Hi"          ,0,GTK_BINOP)
 #endif // !defined(LEGACY_BACKEND) && !defined(_TARGET_64BIT_)
 
 #ifdef FEATURE_SIMD

@@ -24,8 +24,12 @@
 #endif // __clang__
 #endif // !_MSC_VER
 
+#ifndef SIZE_T_MAX
 #define SIZE_T_MAX ((size_t)-1)
+#endif
+#ifndef SSIZE_T_MAX
 #define SSIZE_T_MAX ((ptrdiff_t)(SIZE_T_MAX / 2))
+#endif
 
 #ifndef _INC_WINDOWS
 // -----------------------------------------------------------------------------------------------------------
@@ -35,7 +39,6 @@
 
 typedef uint32_t BOOL;
 typedef uint32_t DWORD;
-typedef void* LPVOID;
 
 // -----------------------------------------------------------------------------------------------------------
 // HRESULT subset.
@@ -245,6 +248,8 @@ typedef uintptr_t TADDR;
     extern type var
 #define GVAL_IMPL(type, var) \
     type var
+#define GVAL_IMPL_INIT(type, var, init) \
+    type var = init
 
 #define GPTR_DECL(type, var) \
     extern type* var
@@ -453,7 +458,6 @@ public:
 
     static bool IsCurrentThreadFinalizer();
     static void Wait(DWORD timeout, bool allowReentrantWait = false);
-    static bool WatchDog();
     static void SignalFinalizationDone(bool fFinalizer);
     static void SetFinalizerThread(Thread * pThread);
     static HANDLE GetFinalizerEvent();
@@ -544,8 +548,8 @@ void LogSpewAlways(const char *fmt, ...);
 
 // -----------------------------------------------------------------------------------------------------------
 
-void StompWriteBarrierEphemeral();
-void StompWriteBarrierResize(bool bReqUpperBoundsCheck);
+void StompWriteBarrierEphemeral(bool isRuntimeSuspended);
+void StompWriteBarrierResize(bool isRuntimeSuspended, bool bReqUpperBoundsCheck);
 
 class CLRConfig
 {
@@ -569,7 +573,7 @@ public:
     typedef CLRConfigTypes ConfigStringInfo;
 
     static uint32_t GetConfigValue(ConfigDWORDInfo eType);
-    static HRESULT GetConfigValue(ConfigStringInfo /*eType*/, TCHAR * * outVal);
+    static HRESULT GetConfigValue(ConfigStringInfo /*eType*/, __out_z TCHAR * * outVal);
 };
 
 inline bool FitsInU1(uint64_t val)

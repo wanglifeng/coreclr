@@ -2,6 +2,14 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+.macro LEAF_ENTRY Name, Section
+        .thumb_func
+        .global C_FUNC(\Name)
+        .type \Name, %function
+C_FUNC(\Name):
+        .fnstart
+.endm
+
 .macro NESTED_ENTRY Name, Section, Handler
         LEAF_ENTRY \Name, \Section
         .ifnc \Handler, NoHandler
@@ -17,14 +25,6 @@
         .thumb_func
         .global C_FUNC(\Name)
 C_FUNC(\Name):
-.endm
-
-.macro LEAF_ENTRY Name, Section
-        .thumb_func
-        .global C_FUNC(\Name)
-        .type \Name, %function
-C_FUNC(\Name):
-        .fnstart
 .endm
 
 .macro LEAF_END_MARKED Name, Section
@@ -85,6 +85,7 @@ C_FUNC(\Name\()_End):
 
 .macro PUSH_ARGUMENT_REGISTERS
         push {r0-r3}
+        .save {r0-r3}
 .endm
 
 .macro pop_register Reg
@@ -112,7 +113,7 @@ C_FUNC(\Name\()_End):
 // CalleeSavedRegisters::r10
 // CalleeSavedRegisters::r9
 // CalleeSavedRegisters::r8
-// CalleeSavedRegisters::r7
+// CalleeSavedRegisters::r7    <- r7
 // CalleeSavedRegisters::r6
 // CalleeSavedRegisters::r5
 // CalleeSavedRegisters::r4    <- __PWTB_StackAlloc, __PWTB_TransitionBlock
@@ -125,7 +126,7 @@ C_FUNC(\Name\()_End):
 // d2
 // d1
 // d0                          <- __PWTB_FloatArgumentRegisters
-.macro PROLOG_WITH_TRANSITION_BLOCK extraLocals = 0, saveFpArgs = 0, pushArgRegs = 0
+.macro PROLOG_WITH_TRANSITION_BLOCK extraLocals = 0, saveFpArgs = 1, pushArgRegs = 0
 
         __PWTB_FloatArgumentRegisters = \extraLocals
         __PWTB_SaveFPArgs = \saveFpArgs
@@ -134,13 +135,13 @@ C_FUNC(\Name\()_End):
                 .if ((__PWTB_FloatArgumentRegisters % 8) != 0)
                 __PWTB_FloatArgumentRegisters = __PWTB_FloatArgumentRegisters + 4
                 .endif
-                
-                __PWTB_TransitionBlock = __PWTB_FloatArgumentRegisters + 8 * 8 + 8 // 8 floating point registers
-        .else                
+
+                __PWTB_TransitionBlock = __PWTB_FloatArgumentRegisters + 8 * 8 + 4 // 8 floating point registers + padding
+        .else
                 .if ((__PWTB_FloatArgumentRegisters % 8) == 0)
                 __PWTB_FloatArgumentRegisters = __PWTB_FloatArgumentRegisters + 4
                 .endif
-                
+
                 __PWTB_TransitionBlock = __PWTB_FloatArgumentRegisters
         .endif
 
@@ -151,14 +152,16 @@ C_FUNC(\Name\()_End):
         .endif
 
         PUSH_CALLEE_SAVED_REGISTERS
-        
+        PROLOG_STACK_SAVE_OFFSET r7, #12
+        // let r7 point the saved r7 in the stack (clang FP style)
+
         alloc_stack     __PWTB_StackAlloc
-        
+
         .if (__PWTB_SaveFPArgs == 1)
                 add r6, sp, #(__PWTB_FloatArgumentRegisters)
                 vstm r6, {d0-d7}
         .endif
-        
+
         CHECK_STACK_ALIGNMENT
         
         END_PROLOGUE
@@ -171,7 +174,7 @@ C_FUNC(\Name\()_End):
         POP_CALLEE_SAVED_REGISTERS
         free_stack 16
         bx lr
-                
+
 .endm
 
 .macro EPILOG_WITH_TRANSITION_BLOCK_TAILCALL
@@ -180,11 +183,11 @@ C_FUNC(\Name\()_End):
                 add r6, sp, #(__PWTB_FloatArgumentRegisters)
                 vldm r6, {d0-d7}
         .endif
-        
+
         free_stack __PWTB_StackAlloc
         POP_CALLEE_SAVED_REGISTERS
-        POP_ARGUMENT_REGISTERS        
-        
+        POP_ARGUMENT_REGISTERS
+
 .endm
 
 .macro EMIT_BREAKPOINT
@@ -204,8 +207,29 @@ C_FUNC(\Name\()_End):
         mov \Register, sp
 .endm
 
+.macro PROLOG_STACK_SAVE_OFFSET Register, Offset
+        .setfp \Register, sp, \Offset
+        add \Register, sp, \Offset
+.endm
+
+.macro EPILOG_STACK_FREE Size
+        add sp, sp, \Size
+.endm
+
 .macro EPILOG_STACK_RESTORE Register
         mov sp, \Register
+.endm
+
+.macro EPILOG_STACK_RESTORE_OFFSET Register, Offset
+        sub sp, \Register, \Offset
+.endm
+
+.macro EPILOG_BRANCH Target
+        b \Target
+.endm
+
+.macro EPILOG_BRANCH_REG reg
+        bx \reg
 .endm
 
 .macro EPILOG_POP RegList

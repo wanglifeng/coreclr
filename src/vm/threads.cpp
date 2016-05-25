@@ -344,16 +344,22 @@ BOOL SetAppDomain(AppDomain* ad)
 }
 
 #if defined(FEATURE_MERGE_JIT_AND_ENGINE)
-Compiler* GetTlsCompiler()
+extern "C"
+{
+
+void* GetJitTls()
 {
     LIMITED_METHOD_CONTRACT
 
-    return gCurrentThreadInfo.m_pCompiler;
+    return gCurrentThreadInfo.m_pJitTls;
 }
-void SetTlsCompiler(Compiler* c)
+
+void SetJitTls(void* v)
 {
     LIMITED_METHOD_CONTRACT
-    gCurrentThreadInfo.m_pCompiler = c;
+    gCurrentThreadInfo.m_pJitTls = v;
+}
+
 }
 #endif // defined(FEATURE_MERGE_JIT_AND_ENGINE)
 
@@ -602,16 +608,18 @@ void Thread::ChooseThreadCPUGroupAffinity()
     }
     CONTRACTL_END;
 
-#if !defined(FEATURE_CORECLR)
+#ifndef FEATURE_PAL
     if (!CPUGroupInfo::CanEnableGCCPUGroups() || !CPUGroupInfo::CanEnableThreadUseAllCpuGroups()) 
          return;
 
+#ifndef FEATURE_CORECLR
     // We only handle the non-hosted case here. If CLR is hosted, the hosting 
     // process controls the physical OS Threads. If CLR is not hosted, we can 
     // set thread group affinity on OS threads directly.
     HostComHolder<IHostTask> pHostTask (GetHostTaskWithAddRef());
     if (pHostTask != NULL)
         return;
+#endif //!FEATURE_CORECLR
 
     //Borrow the ThreadStore Lock here: Lock ThreadStore before distributing threads
     ThreadStoreLockHolder TSLockHolder(TRUE);
@@ -628,7 +636,7 @@ void Thread::ChooseThreadCPUGroupAffinity()
     CPUGroupInfo::SetThreadGroupAffinity(GetThreadHandle(), &groupAffinity, NULL);
     m_wCPUGroup = groupAffinity.Group;
     m_pAffinityMask = groupAffinity.Mask;
-#endif
+#endif // !FEATURE_PAL
 }
 
 void Thread::ClearThreadCPUGroupAffinity()
@@ -640,16 +648,18 @@ void Thread::ClearThreadCPUGroupAffinity()
     }
     CONTRACTL_END;
 
-#if !defined(FEATURE_CORECLR)
+#ifndef FEATURE_PAL
     if (!CPUGroupInfo::CanEnableGCCPUGroups() || !CPUGroupInfo::CanEnableThreadUseAllCpuGroups()) 
          return;
 
+#ifndef FEATURE_CORECLR
     // We only handle the non-hosted case here. If CLR is hosted, the hosting 
     // process controls the physical OS Threads. If CLR is not hosted, we can 
     // set thread group affinity on OS threads directly.
     HostComHolder<IHostTask> pHostTask (GetHostTaskWithAddRef());
     if (pHostTask != NULL)
         return;
+#endif //!FEATURE_CORECLR
 
     ThreadStoreLockHolder TSLockHolder(TRUE);
 
@@ -664,7 +674,7 @@ void Thread::ClearThreadCPUGroupAffinity()
 
     m_wCPUGroup = 0;
     m_pAffinityMask = 0;
-#endif 
+#endif // !FEATURE_PAL
 }
 
 DWORD Thread::StartThread()
@@ -1407,7 +1417,7 @@ DWORD_PTR Thread::OBJREF_HASH = OBJREF_TABSIZE;
 //             GetThreadGenericFullCheck() to actually be called when GetThread() is
 //             called, given the optimizations around GetThread():
 //             * code:InitThreadManager ensures that non-PAL, debug, x86/x64 builds that
-//                 run with COMPLUS_EnforceEEThreadNotRequiredContracts set are forced to
+//                 run with COMPlus_EnforceEEThreadNotRequiredContracts set are forced to
 //                 use GetThreadGeneric instead of the dynamically generated optimized
 //                 TLS getter.
 //             * The non-PAL, debug, x86/x64 GetThreadGeneric() (implemented in the
@@ -4511,6 +4521,14 @@ retry:
         {
             ThrowOutOfMemory();
         }
+#ifdef FEATURE_PAL
+        else if (errorCode == ERROR_NOT_SUPPORTED)
+        {
+            // "Wait for any" and "wait for all" operations on multiple wait handles are not supported when a cross-process sync
+            // object is included in the array
+            COMPlusThrow(kPlatformNotSupportedException, W("PlatformNotSupported_NamedSyncObjectWaitAnyWaitAll"));
+        }
+#endif
         else if (errorCode != ERROR_INVALID_HANDLE)
         {
             ThrowWin32(errorCode);

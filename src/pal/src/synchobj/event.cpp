@@ -30,11 +30,6 @@ using namespace CorUnix;
 /* ------------------- Definitions ------------------------------*/
 SET_DEFAULT_DEBUG_CHANNEL(SYNC);
 
-enum
-{
-    c_cchMaxEvent = MAX_LONGPATH + 1
-};
-
 CObjectType CorUnix::otManualResetEvent(
                 otiManualResetEvent,
                 NULL,   // No cleanup routine
@@ -45,8 +40,8 @@ CObjectType CorUnix::otManualResetEvent(
                 EVENT_ALL_ACCESS, // Currently ignored (no Win32 security)
                 CObjectType::SecuritySupported,
                 CObjectType::SecurityInfoNotPersisted,
-                CObjectType::ObjectCanHaveName,
-                CObjectType::CrossProcessDuplicationAllowed,
+                CObjectType::UnnamedObject,
+                CObjectType::LocalDuplicationOnly,
                 CObjectType::WaitableObject,
                 CObjectType::ObjectCanBeUnsignaled,
                 CObjectType::ThreadReleaseHasNoSideEffects,
@@ -63,8 +58,8 @@ CObjectType CorUnix::otAutoResetEvent(
                 EVENT_ALL_ACCESS, // Currently ignored (no Win32 security)
                 CObjectType::SecuritySupported,
                 CObjectType::SecurityInfoNotPersisted,
-                CObjectType::ObjectCanHaveName,
-                CObjectType::CrossProcessDuplicationAllowed,
+                CObjectType::UnnamedObject,
+                CObjectType::LocalDuplicationOnly,
                 CObjectType::WaitableObject,
                 CObjectType::ObjectCanBeUnsignaled,
                 CObjectType::ThreadReleaseAltersSignalCount,

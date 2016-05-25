@@ -2056,7 +2056,7 @@ namespace System.Globalization {
             {
                 if (patterns[i] == null)
                 {
-                    throw new ArgumentNullException(Environment.GetResourceString("ArgumentNull_ArrayValue"));
+                    throw new ArgumentNullException("patterns[" + i + "]", Environment.GetResourceString("ArgumentNull_ArrayValue"));
                 }
             }
 
@@ -2829,7 +2829,7 @@ namespace System.Globalization {
                 }
                 previousNode = temp;
             } ;
-            Contract.Assert(true, "The hashtable is full.  This should not happen.");
+            Contract.Assert(false, "The hashtable is full.  This should not happen.");
         }
 
         void InsertHash(TokenHashValue[] hashTable, String str, TokenType tokenType, int tokenValue) {
@@ -2922,7 +2922,7 @@ namespace System.Globalization {
                 hashcode += hashProbe;
                 if (hashcode >= TOKEN_HASH_SIZE) hashcode -= TOKEN_HASH_SIZE;
             } while (i < TOKEN_HASH_SIZE);
-            Contract.Assert(true, "The hashtable is full.  This should not happen.");
+            Contract.Assert(false, "The hashtable is full.  This should not happen.");
         }
     }   // class DateTimeFormatInfo
 

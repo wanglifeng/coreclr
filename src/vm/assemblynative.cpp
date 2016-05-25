@@ -52,7 +52,7 @@
 #include "assemblynativeresource.h"
 #endif // !FEATURE_CORECLR
 
-#if defined(FEATURE_HOSTED_BINDER) && !defined(FEATURE_CORECLR)
+#if !defined(FEATURE_CORECLR)
 #include "clrprivbinderloadfile.h" 
 #endif
 
@@ -137,7 +137,6 @@ FCIMPL1(FC_BOOL_RET, AssemblyNative::IsNewPortableAssembly, AssemblyNameBaseObje
 FCIMPLEND
 #endif // FEATURE_FUSION
 
-#ifdef FEATURE_HOSTED_BINDER
 FCIMPL9(Object*, AssemblyNative::Load, AssemblyNameBaseObject* assemblyNameUNSAFE, 
         StringObject* codeBaseUNSAFE, 
         Object* securityUNSAFE, 
@@ -147,16 +146,6 @@ FCIMPL9(Object*, AssemblyNative::Load, AssemblyNameBaseObject* assemblyNameUNSAF
         CLR_BOOL fThrowOnFileNotFound,
         CLR_BOOL fForIntrospection,
         CLR_BOOL fSuppressSecurityChecks)
-#else // !FEATURE_HOSTED_BINDER
-FCIMPL8(Object*, AssemblyNative::Load, AssemblyNameBaseObject* assemblyNameUNSAFE, 
-        StringObject* codeBaseUNSAFE, 
-        Object* securityUNSAFE, 
-        AssemblyBaseObject* requestingAssemblyUNSAFE,
-        StackCrawlMark* stackMark,
-        CLR_BOOL fThrowOnFileNotFound,
-        CLR_BOOL fForIntrospection,
-        CLR_BOOL fSuppressSecurityChecks)
-#endif // FEATURE_HOSTED_BINDER
 {
     FCALL_CONTRACT;
 
@@ -200,11 +189,9 @@ FCIMPL8(Object*, AssemblyNative::Load, AssemblyNameBaseObject* assemblyNameUNSAF
     }
     else if (!fForIntrospection)
     {
-#ifdef FEATURE_HOSTED_BINDER
         // name specified, if immersive ignore the codebase
         if (GetThread()->GetDomain()->HasLoadContextHostBinder())
             gc.codeBase = NULL;
-#endif //FEATURE_HOSTED_BINDER
 
         // Compute parent assembly
         Assembly * pRefAssembly;
@@ -243,13 +230,11 @@ FCIMPL8(Object*, AssemblyNative::Load, AssemblyNameBaseObject* assemblyNameUNSAF
         EEFileLoadException::Throw(&spec, COR_E_NOTSUPPORTED);
     }
     
-#ifdef FEATURE_HOSTED_BINDER
     if (pPrivHostBinder != NULL)
     {
         pParentAssembly = NULL;
         spec.SetHostBinder(pPrivHostBinder);
     }
-#endif // FEATURE_HOSTED_BINDER
     
     if (gc.codeBase != NULL)
         spec.SetCodeBase(&(pThread->m_MarshalAlloc), &gc.codeBase);
@@ -385,12 +370,12 @@ Assembly* AssemblyNative::LoadFromBuffer(BOOL fForIntrospection, const BYTE* pAs
 
         CLRPrivBinderLoadFile* pBinderToUse = NULL;
 
-#if defined(FEATURE_HOSTED_BINDER) && !defined(FEATURE_CORECLR)
+#if !defined(FEATURE_CORECLR)
         if (GetAppDomain()->HasLoadContextHostBinder())
         {
             pBinderToUse = CLRPrivBinderLoadFile::GetOrCreateBinder();
         }
-#endif //  FEATURE_HOSTED_BINDER && !FEATURE_CORECLR
+#endif // !FEATURE_CORECLR
 
         pFile = PEAssembly::OpenMemory(pCallersAssembly->GetManifestFile(),
                                                   pAssemblyData, (COUNT_T)uAssemblyLength, 
@@ -530,28 +515,6 @@ Assembly* AssemblyNative::LoadFromBuffer(BOOL fForIntrospection, const BYTE* pAs
     return pAssembly;
 }
 
-#ifdef FEATURE_CORECLR    
-// static
-void QCALLTYPE AssemblyNative::LoadFromUnmanagedArray(CLR_BOOL fForIntrospection,   BYTE* pAssemblyData,  UINT64 uAssemblyLength, BYTE* pPDBData,  UINT64 uPDBLength, QCall::StackCrawlMarkHandle stackMark, QCall::ObjectHandleOnStack retAssembly)
-{
-    QCALL_CONTRACT;
-    
-    DomainAssembly * pDomainAssembly = NULL;
-        
-    BEGIN_QCALL;
-    Assembly* pAssembly = NULL;
-    GCX_COOP();    
-    pAssembly=LoadFromBuffer(fForIntrospection, pAssemblyData, uAssemblyLength, pPDBData, uPDBLength, stackMark, NULL, kCurrentAppDomain); 
-    pDomainAssembly = pAssembly->GetDomainAssembly();
-    retAssembly.Set(pDomainAssembly->GetExposedAssemblyObject());
-    END_QCALL;
-}
-#endif //  FEATURE_CORECLR    
-
-
-
-
-
 FCIMPL6(Object*, AssemblyNative::LoadImage, U1Array* PEByteArrayUNSAFE,
         U1Array* SymByteArrayUNSAFE, Object* securityUNSAFE,
         StackCrawlMark* stackMark, CLR_BOOL fForIntrospection, SecurityContextSource securityContextSource)
@@ -635,11 +598,6 @@ FCIMPL2(Object*, AssemblyNative::LoadFile, StringObject* pathUNSAFE, Object* sec
     gc.strPath = ObjectToSTRINGREF(pathUNSAFE);
 
     HELPER_METHOD_FRAME_BEGIN_RET_PROTECT(gc);
-
-#ifdef FEATURE_CORECLR
-    if(!GetAppDomain()->IsLoadFileAllowed())
-        COMPlusThrow(kNotSupportedException);
-#endif
 
     if(CorHost2::IsLoadFromBlocked())
         COMPlusThrow(kFileLoadException, FUSION_E_LOADFROM_BLOCKED);
@@ -1197,7 +1155,7 @@ FCIMPL1(FC_BOOL_RET, AssemblyNative::IsReflectionOnly, AssemblyBaseObject *pAsse
 }
 FCIMPLEND
 
-void QCALLTYPE AssemblyNative::GetType(QCall::AssemblyHandle pAssembly, LPCWSTR wszName, BOOL bThrowOnError, BOOL bIgnoreCase, QCall::ObjectHandleOnStack retType)
+void QCALLTYPE AssemblyNative::GetType(QCall::AssemblyHandle pAssembly, LPCWSTR wszName, BOOL bThrowOnError, BOOL bIgnoreCase, QCall::ObjectHandleOnStack retType, QCall::ObjectHandleOnStack keepAlive)
 {
     CONTRACTL
     {
@@ -1213,32 +1171,16 @@ void QCALLTYPE AssemblyNative::GetType(QCall::AssemblyHandle pAssembly, LPCWSTR 
     if (!wszName)
         COMPlusThrowArgumentNull(W("name"), W("ArgumentNull_String"));
 
-    GCX_COOP();
+    BOOL prohibitAsmQualifiedName = TRUE;
 
-    OBJECTREF keepAlive = NULL;
-    GCPROTECT_BEGIN(keepAlive);
-
-    {
-        GCX_PREEMP();
-
-        BOOL prohibitAsmQualifiedName = TRUE;
-
-#ifdef FEATURE_LEGACYNETCF
-        // NetCF type name parser allowed assembly name to be overriden here
-        if (GetAppDomain()->GetAppDomainCompatMode() == BaseDomain::APPDOMAINCOMPAT_APP_EARLIER_THAN_WP8)
-            prohibitAsmQualifiedName = FALSE;
-#endif
-
-        // Load the class from this assembly (fail if it is in a different one).
-        retTypeHandle = TypeName::GetTypeManaged(wszName, pAssembly, bThrowOnError, bIgnoreCase, pAssembly->IsIntrospectionOnly(), prohibitAsmQualifiedName, NULL, FALSE, &keepAlive);
-    }
+    // Load the class from this assembly (fail if it is in a different one).
+    retTypeHandle = TypeName::GetTypeManaged(wszName, pAssembly, bThrowOnError, bIgnoreCase, pAssembly->IsIntrospectionOnly(), prohibitAsmQualifiedName, NULL, FALSE, (OBJECTREF*)keepAlive.m_ppObject);
 
     if (!retTypeHandle.IsNull())
     {
-        retType.Set(retTypeHandle.GetManagedClassObject());
+         GCX_COOP();
+         retType.Set(retTypeHandle.GetManagedClassObject());
     }
-
-    GCPROTECT_END();
 
     END_QCALL;
 
@@ -2221,23 +2163,6 @@ void QCALLTYPE AssemblyNative::GetGrantSet(QCall::AssemblyHandle pAssembly, QCal
     END_QCALL;
 }
 
-#ifdef FEATURE_LEGACYNETCF
-BOOL QCALLTYPE AssemblyNative::GetIsProfileAssembly(QCall::AssemblyHandle pAssembly)
-{
-    QCALL_CONTRACT;
-
-    BOOL fIsProfile = FALSE;
-
-    BEGIN_QCALL;
-
-    fIsProfile = pAssembly->GetFile()->IsProfileAssembly();
-
-    END_QCALL;
-
-    return fIsProfile;
-}
-#endif // FEATURE_LEGACYNETCF
-
 //
 // QCalls to determine if everything introduced by the assembly is either security critical or safe critical
 //
@@ -2364,8 +2289,8 @@ void QCALLTYPE AssemblyNative::CreateVersionInfoResource(LPCWSTR    pwzFilename,
     const void  *pvData=0;              // Pointer to the resource.
     ULONG       cbData;                 // Size of the resource data.
     ULONG       cbWritten;
-    WCHAR       szFile[MAX_PATH_FNAME+1];     // File name for resource file.
-    WCHAR       szPath[MAX_LONGPATH+1];     // Path name for resource file.
+    PathString       szFile;     // File name for resource file.
+    PathString       szPath;     // Path name for resource file.
     HandleHolder hFile;
 
     res.SetInfo(pwzFilename, 
@@ -2387,9 +2312,9 @@ void QCALLTYPE AssemblyNative::CreateVersionInfoResource(LPCWSTR    pwzFilename,
     // messages including the path/file name</TODO>
 
     // Persist to a file.
-    if (!WszGetTempPath(MAX_LONGPATH, szPath))
+    if (!WszGetTempPath(szPath))
         COMPlusThrowWin32();
-    if (!WszGetTempFileName(szPath, W("RES"), 0, szFile))
+    if (!WszGetTempFileName(szPath.GetUnicode(), W("RES"), 0, szFile))
         COMPlusThrowWin32();
 
     hFile = WszCreateFile(szFile, GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);

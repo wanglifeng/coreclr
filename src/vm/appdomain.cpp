@@ -97,14 +97,12 @@
 #include "../binder/inc/clrprivbindercoreclr.h"
 #endif
 
-#if defined(FEATURE_APPX_BINDER) && defined(FEATURE_HOSTED_BINDER)
+#if defined(FEATURE_APPX_BINDER)
 #include "appxutil.h"
 #include "clrprivbinderappx.h"
 #endif
 
-#ifdef FEATURE_HOSTED_BINDER
 #include "clrprivtypecachewinrt.h"
-#endif
 
 #ifndef FEATURE_CORECLR
 #include "nlsinfo.h"
@@ -794,10 +792,6 @@ BaseDomain::BaseDomain()
     m_reJitMgr.PreInit(this == (BaseDomain *) g_pSharedDomainMemory);
 #endif
 
-#ifdef FEATURE_CORECLR
-    m_CompatMode = APPDOMAINCOMPAT_NONE;
-#endif
-    
 } //BaseDomain::BaseDomain
 
 //*****************************************************************************
@@ -3413,11 +3407,8 @@ int g_fInitializingInitialAD = 0;
 // This routine completes the initialization of the default domaine.
 // After this call mananged code can be executed.
 void SystemDomain::InitializeDefaultDomain(
-    BOOL allowRedirects
-#ifdef FEATURE_HOSTED_BINDER
-    , ICLRPrivBinder * pBinder
-#endif
-    )
+    BOOL allowRedirects,
+    ICLRPrivBinder * pBinder)
 {
     STANDARD_VM_CONTRACT;
 
@@ -3478,7 +3469,6 @@ void SystemDomain::InitializeDefaultDomain(
 
     AppDomain* pDefaultDomain = SystemDomain::System()->DefaultDomain();
 
-#ifdef FEATURE_HOSTED_BINDER
     if (pBinder != nullptr)
     {
         pDefaultDomain->SetLoadContextHostBinder(pBinder);
@@ -3490,7 +3480,6 @@ void SystemDomain::InitializeDefaultDomain(
             pDefaultDomain->SetLoadContextHostBinder(pAppXBinder);
         }
     #endif
-#endif
 
     {
         GCX_COOP();
@@ -4770,12 +4759,10 @@ void SystemDomain::GetDevpathW(__out_ecount_opt(1) LPWSTR* pDevpath, DWORD* pdwD
 
         if(m_fDevpath == FALSE) {
             DWORD dwPath = 0;
-            dwPath = WszGetEnvironmentVariable(APPENV_DEVPATH, 0, 0);
+            PathString m_pwDevpathholder; 
+            dwPath = WszGetEnvironmentVariable(APPENV_DEVPATH, m_pwDevpathholder);
             if(dwPath) {
-                m_pwDevpath = (WCHAR*) new WCHAR[dwPath];
-                m_dwDevpath = WszGetEnvironmentVariable(APPENV_DEVPATH,
-                                                        m_pwDevpath,
-                                                        dwPath);
+                m_pwDevpath = m_pwDevpathholder.GetCopyOfUnicodeString();
             }
             else {
                 RegKeyHolder userKey;
@@ -5072,7 +5059,6 @@ void AppDomain::Init()
     SetStage( STAGE_CREATING);
 
 
-#ifdef FEATURE_HOSTED_BINDER
     // The lock is taken also during stack walking (GC or profiler)
     //  - To prevent deadlock with GC thread, we cannot trigger GC while holding the lock
     //  - To prevent deadlock with profiler thread, we cannot allow thread suspension
@@ -5082,7 +5068,6 @@ void AppDomain::Init()
                     | CRST_DEBUGGER_THREAD 
                     INDEBUG(| CRST_DEBUG_ONLY_CHECK_FORBID_SUSPEND_THREAD)));
     m_crstHostAssemblyMapAdd.Init(CrstHostAssemblyMapAdd);
-#endif //FEATURE_HOSTED_BINDER
 
     m_dwId = SystemDomain::GetNewAppDomainId(this);
 
@@ -7643,7 +7628,6 @@ DomainAssembly * AppDomain::FindAssembly(PEAssembly * pFile, FindAssemblyOptions
 
     const bool includeFailedToLoad = (options & FindAssemblyOptions_IncludeFailedToLoad) != 0;
 
-#ifdef FEATURE_HOSTED_BINDER
     if (pFile->HasHostAssembly())
     {
         DomainAssembly * pDA = FindAssembly(pFile->GetHostAssembly());
@@ -7653,7 +7637,6 @@ DomainAssembly * AppDomain::FindAssembly(PEAssembly * pFile, FindAssemblyOptions
         }
         return nullptr;
     }
-#endif
 
     AssemblyIterator i = IterateAssembliesEx((AssemblyIterationFlags)(
         kIncludeLoaded | 
@@ -8200,7 +8183,6 @@ BOOL AppDomain::PostBindResolveAssembly(AssemblySpec  *pPrePolicySpec,
     return fFailure;
 }
 
-#ifdef FEATURE_HOSTED_BINDER
 //----------------------------------------------------------------------------------------
 // Helper class for hosted binder
 
@@ -8483,7 +8465,6 @@ AppDomain::BindHostedPrivAssembly(
 
     return S_OK;
 } // AppDomain::BindHostedPrivAssembly
-#endif // FEATURE_HOSTED_BINDER
 
 //---------------------------------------------------------------------------------------------------------------------
 PEAssembly * AppDomain::BindAssemblySpec(
@@ -8504,7 +8485,7 @@ PEAssembly * AppDomain::BindAssemblySpec(
 
     BOOL fForceReThrow = FALSE;
 
-#if defined(FEATURE_HOSTED_BINDER) && defined(FEATURE_APPX_BINDER)
+#if defined(FEATURE_APPX_BINDER)
     //
     // If there is a host binder available and this is an unparented bind within the
     // default load context, then the bind will be delegated to the domain-wide host
@@ -8632,8 +8613,8 @@ EndTry1:;
         return pAssembly.Extract();
     }
     else
-#endif //FEATURE_HOSTED_BINDER && FEATURE_APPX_BINDER
-#if defined(FEATURE_HOSTED_BINDER) && defined(FEATURE_COMINTEROP)
+#endif // FEATURE_APPX_BINDER
+#if defined(FEATURE_COMINTEROP)
     // Handle WinRT assemblies in the classic/hybrid scenario. If this is an AppX process,
     // then this case will be handled by the previous block as part of the full set of
     // available binding hosts.
@@ -8715,7 +8696,7 @@ EndTry2:;
         return pAssembly.Extract();
     }
     else
-#endif // FEATURE_HOSTED_BINDER && FEATURE_COMINTEROP
+#endif // FEATURE_COMINTEROP
     if (pSpec->HasUniqueIdentity())
     {
         HRESULT hrBindResult = S_OK;
@@ -13831,14 +13812,30 @@ DWORD* SetupCompatibilityFlags()
         SO_TOLERANT;
     } CONTRACTL_END;
 
-    WCHAR buf[2] = { '\0', '\0' };
+    LPCWSTR buf;
+    bool return_null = true;
 
     FAULT_NOT_FATAL(); // we can simply give up
 
-    if (WszGetEnvironmentVariable(W("UnsupportedCompatSwitchesEnabled"), buf, COUNTOF(buf)) == 0)
-        return NULL;
+    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD(SetLastError(COR_E_STACKOVERFLOW); return NULL;)
+    InlineSString<4> bufString;
+    
+    if (WszGetEnvironmentVariable(W("UnsupportedCompatSwitchesEnabled"), bufString) != 0)
+    {
+        buf = bufString.GetUnicode();
+        if (buf[0] != '1' || buf[1] != '\0')
+        {
+            return_null = true;
+        }
+        else
+        {
+            return_null = false;
+        }
 
-    if (buf[0] != '1' || buf[1] != '\0')
+    }
+    END_SO_INTOLERANT_CODE
+
+    if (return_null)
         return NULL;
 
     static const LPCWSTR rgFlagNames[] = {
@@ -13852,17 +13849,21 @@ DWORD* SetupCompatibilityFlags()
         return NULL;
     ZeroMemory(pFlags, size * sizeof(DWORD));
 
+    BEGIN_SO_INTOLERANT_CODE_NO_THROW_CHECK_THREAD(SetLastError(COR_E_STACKOVERFLOW); return NULL;)
+    InlineSString<4> bufEnvString;
     for (int i = 0; i < COUNTOF(rgFlagNames); i++)
     {
-        if (WszGetEnvironmentVariable(rgFlagNames[i], buf, COUNTOF(buf)) == 0)
+        if (WszGetEnvironmentVariable(rgFlagNames[i], bufEnvString) == 0)
             continue;
 
+        buf = bufEnvString.GetUnicode();
         if (buf[0] != '1' || buf[1] != '\0')
             continue;
 
         pFlags[i / 32] |= 1 << (i % 32);
     }
-
+    END_SO_INTOLERANT_CODE
+    
     return pFlags;
 }
 
@@ -14145,23 +14146,6 @@ BOOL AppDomain::IsImageFullyTrusted(PEImage* pPEImage)
     WRAPPER_NO_CONTRACT;
     return IsImageFromTrustedPath(pPEImage);
 }
-
-#ifdef FEATURE_LEGACYNETCF
-BOOL RuntimeIsLegacyNetCF(DWORD adid)
-{
-    AppDomain * pAppDomain = GetAppDomain();
-
-    _ASSERTE(adid == 0 || adid == pAppDomain->GetId().m_dwId);
-
-    if (pAppDomain == NULL)
-        return FALSE;
-
-    if (pAppDomain->GetAppDomainCompatMode() == BaseDomain::APPDOMAINCOMPAT_APP_EARLIER_THAN_WP8)
-        return TRUE;
-
-    return FALSE;
-}
-#endif
 
 #endif //FEATURE_CORECLR
 
@@ -14628,7 +14612,6 @@ TypeEquivalenceHashTable * AppDomain::GetTypeEquivalenceCache()
 
 #endif //FEATURE_TYPEEQUIVALENCE
 
-#if defined(FEATURE_HOSTED_BINDER)
 #if !defined(DACCESS_COMPILE)
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -14788,7 +14771,8 @@ void AppDomain::UnPublishHostedAssembly(
 HRESULT AppDomain::SetWinrtApplicationContext(SString &appLocalWinMD)
 {
     STANDARD_VM_CONTRACT;
-
+    
+    _ASSERTE(WinRTSupported());
     _ASSERTE(m_pWinRtBinder != nullptr);
 
     _ASSERTE(GetTPABinderContext() != NULL);
@@ -14837,8 +14821,6 @@ PTR_DomainAssembly AppDomain::FindAssembly(PTR_ICLRPrivAssembly pHostAssembly)
     }
 }
 
-#endif //FEATURE_HOSTED_BINDER
-
 #if !defined(DACCESS_COMPILE) && defined(FEATURE_CORECLR) && defined(FEATURE_NATIVE_IMAGE_GENERATION)
 
 void ZapperSetBindingPaths(ICorCompilationDomain *pDomain, SString &trustedPlatformAssemblies, SString &platformResourceRoots, SString &appPaths, SString &appNiPaths)
@@ -14851,13 +14833,6 @@ void ZapperSetBindingPaths(ICorCompilationDomain *pDomain, SString &trustedPlatf
     ((CompilationDomain*)pDomain)->SetWinrtApplicationContext(emptString);
 #endif
 }
-
-#ifdef FEATURE_LEGACYNETCF
-void ZapperSetAppCompatWP8(ICorCompilationDomain *pDomain)
-{
-    ((CompilationDomain*)pDomain)->SetAppDomainCompatMode(BaseDomain::APPDOMAINCOMPAT_APP_EARLIER_THAN_WP8);
-}
-#endif
 
 #endif
 

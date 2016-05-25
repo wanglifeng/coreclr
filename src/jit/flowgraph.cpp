@@ -30,9 +30,7 @@ void                Compiler::fgInit()
     fgFirstBBScratch             = nullptr;
 
 #ifdef DEBUG
-    fgInlinedCount               = 0;
-    static ConfigDWORD fJitPrintInlinedMethods;
-    fgPrintInlinedMethods = fJitPrintInlinedMethods.val(CLRConfig::EXTERNAL_JitPrintInlinedMethods) == 1;
+    fgPrintInlinedMethods = JitConfig.JitPrintInlinedMethods() == 1;
 #endif // DEBUG
 
     /* We haven't yet computed the bbPreds lists */
@@ -163,12 +161,11 @@ void                Compiler::fgInit()
 #ifdef DEBUG
     if (!compIsForInlining())
     {
-         static ConfigDWORD fJitNoStructPromotion;
-         if ((fJitNoStructPromotion.val(CLRConfig::INTERNAL_JitNoStructPromotion) & 1) == 1)
+         if ((JitConfig.JitNoStructPromotion() & 1) == 1)
          {
              fgNoStructPromotion = true;
          }
-         if ((fJitNoStructPromotion.val(CLRConfig::INTERNAL_JitNoStructPromotion) & 2) == 2)
+         if ((JitConfig.JitNoStructPromotion() & 2) == 2)
          {
              fgNoStructParamPromotion = true;
          }
@@ -476,7 +473,7 @@ bool Compiler::fgBlockContainsStatementBounded(BasicBlock* block, GenTree* stmt,
 
     assert(stmt->gtOper == GT_STMT);
 
-    __int64 *numTraversed = &GetTlsCompiler()->compNumStatementLinksTraversed;
+    __int64 *numTraversed = &JitTls::GetCompiler()->compNumStatementLinksTraversed;
 
     if (*numTraversed > maxLinks)
         return answerOnBoundExceeded;
@@ -2343,7 +2340,7 @@ void Compiler::fgDfsInvPostOrder()
 
     assert(BlockSetOps::IsMember(this, startNodes, fgFirstBB->bbNum));
 
-    // Call the recursive helper.
+    // Call the flowgraph DFS traversal helper.
     unsigned postIndex = 1;
     for (BasicBlock* block = fgFirstBB; block != nullptr; block = block->bbNext)
     {
@@ -2409,33 +2406,79 @@ BlockSet_ValRet_T   Compiler::fgDomFindStartNodes()
     return startNodes;
 }
 
-/** A simple DFS traversal of the flow graph.
-  * It computes both preorder and postorder numbering.
-  */
+//------------------------------------------------------------------------
+// fgDfsInvPostOrderHelper: Helper to assign post-order numbers to blocks.
+//
+// Arguments:
+//    block   - The starting entry block
+//    visited - The set of visited blocks
+//    count   - Pointer to the Dfs counter
+//
+// Notes:
+//    Compute a non-recursive DFS traversal of the flow graph using an
+//    evaluation stack to assign post-order numbers.
+
 void Compiler::fgDfsInvPostOrderHelper(BasicBlock* block, BlockSet& visited, unsigned* count)
 {
     // Assume we haven't visited this node yet (callers ensure this).
     assert(!BlockSetOps::IsMember(this, visited, block->bbNum));
 
+    // Allocate a local stack to hold the DFS traversal actions necessary
+    // to compute pre/post-ordering of the control flowgraph.
+    ArrayStack<DfsBlockEntry> stack(this);
+
+    // Push the first block on the stack to seed the traversal.
+    stack.Push(DfsBlockEntry(DSS_Pre, block));
     // Flag the node we just visited to avoid backtracking.
     BlockSetOps::AddElemD(this, visited, block->bbNum);
 
-    unsigned cSucc = block->NumSucc(this);
-    for (unsigned j = 0; j < cSucc; ++j)
+    // The search is terminated once all the actions have been processed.
+    while (stack.Height() != 0)
     {
-        BasicBlock* succ = block->GetSucc(j, this);
-        // If this is a node we haven't seen before, go ahead and recurse
-        if (!BlockSetOps::IsMember(this, visited, succ->bbNum))
+        DfsBlockEntry current = stack.Pop();
+        BasicBlock*   currentBlock = current.dfsBlock;
+
+        if (current.dfsStackState == DSS_Pre)
         {
-            fgDfsInvPostOrderHelper(succ, visited, count);
+            // This is a pre-visit that corresponds to the first time the
+            // node is encountered in the spanning tree and receives pre-order
+            // numberings. By pushing the post-action on the stack here we
+            // are guaranteed to only process it after all of its successors
+            // pre and post actions are processed.
+            stack.Push(DfsBlockEntry(DSS_Post, currentBlock));
+
+            unsigned cSucc = currentBlock->NumSucc(this);
+            for (unsigned j = 0; j < cSucc; ++j)
+            {
+                BasicBlock* succ = currentBlock->GetSucc(j, this);
+
+                // If this is a node we haven't seen before, go ahead and process
+                if (!BlockSetOps::IsMember(this, visited, succ->bbNum))
+                {
+                    // Push a pre-visit action for this successor onto the stack and
+                    // mark it as visited in case this block has multiple successors
+                    // to the same node (multi-graph).
+                    stack.Push(DfsBlockEntry(DSS_Pre, succ));
+                    BlockSetOps::AddElemD(this, visited, succ->bbNum);
+                }
+            }
+        }
+        else
+        {
+            // This is a post-visit that corresponds to the last time the
+            // node is visited in the spanning tree and only happens after
+            // all descendents in the spanning tree have had pre and post
+            // actions applied.
+
+            assert(current.dfsStackState == DSS_Post);
+
+            unsigned invCount = fgBBcount - *count + 1;
+            assert(1 <= invCount && invCount <= fgBBNumMax);
+            fgBBInvPostOrder[invCount] = currentBlock;
+            currentBlock->bbDfsNum = invCount;
+            ++(*count);
         }
     }
-
-    unsigned invCount = fgBBcount - *count + 1;
-    assert(1 <= invCount && invCount <= fgBBNumMax);
-    fgBBInvPostOrder[invCount] = block;
-    block->bbDfsNum = invCount;
-    ++(*count);
 }
 
 void Compiler::fgComputeDoms()
@@ -2700,7 +2743,7 @@ void Compiler::fgBuildDomTree()
             }
             else
             {
-                // Otherwise, we do a DFS on the tree.
+                // Otherwise, we do a DFS traversal of the dominator tree.
                 fgTraverseDomTree(i, domTree, &preNum, &postNum);
             }
         }
@@ -2787,6 +2830,20 @@ void Compiler::fgDispDomTree(BasicBlockList** domTree)
 }
 #endif // DEBUG
 
+//------------------------------------------------------------------------
+// fgTraverseDomTree: Assign pre/post-order numbers to the dominator tree.
+//
+// Arguments:
+//    bbNum   - The basic block number of the starting block
+//    domTree - The dominator tree (as child block lists)
+//    preNum  - Pointer to the pre-number counter
+//    postNum - Pointer to the post-number counter
+//
+// Notes:
+//    Runs a non-recursive DFS traversal of the dominator tree using an
+//    evaluation stack to assign pre-order and post-order numbers.
+//    These numberings are used to provide constant time lookup for
+//    ancestor/descendent tests between pairs of nodes in the tree.
 
 void Compiler::fgTraverseDomTree(unsigned         bbNum,
                                  BasicBlockList** domTree,
@@ -2803,12 +2860,60 @@ void Compiler::fgTraverseDomTree(unsigned         bbNum,
         // values must be zero.
         noway_assert(fgDomTreePostOrder[bbNum] == 0);
 
-        fgDomTreePreOrder[bbNum] = (*preNum)++;
-        for (BasicBlockList* current = domTree[bbNum]; current != nullptr; current = current->next)
+        // Allocate a local stack to hold the Dfs traversal actions necessary
+        // to compute pre/post-ordering of the dominator tree.
+        ArrayStack<DfsNumEntry> stack(this);
+
+        // Push the first entry number on the stack to seed the traversal.
+        stack.Push(DfsNumEntry(DSS_Pre, bbNum));
+
+        // The search is terminated once all the actions have been processed.
+        while (stack.Height() != 0)
         {
-            fgTraverseDomTree(current->block->bbNum, domTree, preNum, postNum);
+            DfsNumEntry current = stack.Pop();
+            unsigned    currentNum = current.dfsNum;
+
+            if (current.dfsStackState == DSS_Pre)
+            {
+                // This pre-visit action corresponds to the first time the
+                // node is encountered during the spanning traversal.
+                noway_assert(fgDomTreePreOrder[currentNum] == 0);
+                noway_assert(fgDomTreePostOrder[currentNum] == 0);
+
+                // Assign the preorder number on the first visit.
+                fgDomTreePreOrder[currentNum] = (*preNum)++;
+
+                // Push this nodes post-action on the stack such that all successors
+                // pre-order visits occur before this nodes post-action. We will assign
+                // its post-order numbers when we pop off the stack.
+                stack.Push(DfsNumEntry(DSS_Post, currentNum));
+
+                // For each child in the dominator tree process its pre-actions.
+                for (BasicBlockList* child = domTree[currentNum]; child != nullptr; child = child->next)
+                {
+                    unsigned childNum = child->block->bbNum;
+
+                    // This is a tree so never could have been visited
+                    assert(fgDomTreePreOrder[childNum] == 0);
+
+                    // Push the successor in the dominator tree for pre-actions.
+                    stack.Push(DfsNumEntry(DSS_Pre, childNum));
+                }
+            }
+            else
+            {
+                // This post-visit action corresponds to the last time the node
+                // is encountered and only after all descendents in the spanning
+                // tree have had pre and post-order numbers assigned.
+
+                assert(current.dfsStackState == DSS_Post);
+                assert(fgDomTreePreOrder[currentNum] != 0);
+                assert(fgDomTreePostOrder[currentNum] == 0);
+
+                // Now assign this nodes post-order number.
+                fgDomTreePostOrder[currentNum] = (*postNum)++;
+            }
         }
-        fgDomTreePostOrder[bbNum] = (*postNum)++;
     }
 }
 
@@ -4185,169 +4290,86 @@ private:
     unsigned depth;
 };
 
-void        Compiler::fgFindJumpTargets(const BYTE * codeAddr,
-                                        IL_OFFSET    codeSize,
-                                        BYTE *       jumpTarget)
+//------------------------------------------------------------------------
+// fgFindJumpTargets: walk the IL stream, determining jump target offsets
+//
+// Arguments:
+//    codeAddr   - base address of the IL code buffer
+//    codeSize   - number of bytes in the IL code buffer
+//    jumpTarget - [OUT] byte array for flagging jump targets
+//
+// Notes:
+//    If inlining or prejitting the root, this method also makes
+//    various observations about the method that factor into inline
+//    decisions. It sets `compNativeSizeEstimate` as a side effect.
+//
+//    May throw an exception if the IL is malformed.
+//
+//    jumpTarget[N] is set to a JT_* value if IL offset N is a 
+//    jump target in the method.
+
+void Compiler::fgFindJumpTargets(const BYTE* codeAddr,
+                                 IL_OFFSET   codeSize,
+                                 BYTE*       jumpTarget)
 {
+    const BYTE* codeBegp     = codeAddr;
+    const BYTE* codeEndp     = codeAddr + codeSize;
+    unsigned    varNum;
+    bool        seenJump     = false;
+    var_types   varType      = DUMMY_INIT(TYP_UNDEF);  // TYP_ type
+    typeInfo    ti;                                // Verifier type.
+    bool        typeIsNormed = false;
+    fgStack     pushedStack;      // Keep track of constants and args on the stack.
+    const bool  isForceInline = (info.compFlags & CORINFO_FLG_FORCEINLINE) != 0;
+    const bool  makeInlineObservations = (compInlineResult != nullptr);
+    const bool  isInlining = compIsForInlining();
 
-    const   BYTE *  codeBegp = codeAddr;
-    const   BYTE *  codeEndp = codeAddr + codeSize;
-    unsigned varNum;
-
-    bool    seenJump = false;
-
-    OPCODE  opcode;
-
-    var_types varType = DUMMY_INIT(TYP_UNDEF);  // TYP_ type
-    typeInfo  ti;                               // Verifier type.
-
-#ifndef DEBUG
-    CodeSeqSM   LocalSm;
-#endif
-
-    CodeSeqSM * pSm = NULL;
-
-    SM_OPCODE smOpcode = DUMMY_INIT((SM_OPCODE)0);
-
-    unsigned ldStCount = 0; //Number of load/store instructions.
-
-    // Keep track of constants and args on the stack.
-    fgStack pushedStack;
-
-    // compIsMethodForLRSampling and compIsForInlining() can't both be true.
-    noway_assert(!compIsMethodForLRSampling || !compIsForInlining());
-
-    // Determine whether to start the state machine to estimate the size of the
-    // native code for this method.
-    bool useSm = false;
-    if (compIsMethodForLRSampling)
+    if (makeInlineObservations)
     {
-        // Linear regression sampling requires the estimated native code size.
-        useSm = true;
-    }
-    else if ((codeSize > ALWAYS_INLINE_SIZE) &&
-             !(info.compFlags & CORINFO_FLG_FORCEINLINE))
-    {
-        // The size of the native code for this method matters for inlining
-        // decisions.
-
-        if (compIsForInlining())
-        {
-            // This method is being compiled as an inline candidate and will be
-            // rejected if its native code is too large.
-
-            useSm = true;
-        }
-        else if ((opts.eeFlags & CORJIT_FLG_PREJIT) &&
-                 (codeSize <= impInlineSize))
-        {
-            // This method isn't an inline candidate yet, but it's small enough
-            // to be considered for one in the future. Keep track of the
-            // estimated native code size; it will be used elsewhere later.
-
-            useSm = true;
-        }
-    }
-
-    if (useSm)
-    {
+        // Observe force inline state and code size.
+        compInlineResult->NoteBool(InlineObservation::CALLEE_IS_FORCE_INLINE, isForceInline);
+        compInlineResult->NoteInt(InlineObservation::CALLEE_IL_CODE_SIZE, codeSize);
 
 #ifdef DEBUG
-        pSm = &fgCodeSeqSm;
-#else
-        pSm = &LocalSm;
-#endif
 
-        pSm->Start(this);
+        // If inlining, this method should still be a candidate.
+        if (isInlining)
+        {
+            assert(compInlineResult->IsCandidate());
+        }
+
+#endif // DEBUG
+
+        // note that we're starting to look at the opcodes.
+        compInlineResult->Note(InlineObservation::CALLEE_BEGIN_OPCODE_SCAN);
     }
 
-#ifdef FEATURE_LEGACYNETCF
-
-    // NetCF had some strict restrictions on inlining.  Specifically they
-    // would only inline methods that fit a specific pattern of loading
-    // arguments inorder, starting with zero, with no skipping, but not
-    // needing to load all of them.  Then a 'body' section that could do
-    // anything besides control flow.  And a final ending ret opcode.
-    // Lastly they did not allow starg or ldarga.
-    // These simplifications allowed them to skip past the ldargs, when
-    // inlining, and just use the caller's EE stack as the callee's EE
-    // stack, after optionally popping a few 'arguments' from the end.
-    //
-    // stateNetCFQuirks is a simple state machine to track that state
-    // and allow us to match those restrictions.
-    // State -1 means we're not tracking (no quirks mode)
-    // State 0 though 0x0000FFFF tracks what the *next* ldarg should be
-    //    to match the pattern
-    // State 0x00010000 and above means we are in the 'body' section and
-    //    thus no more ldarg's are allowed.
-    int stateNetCFQuirks = -1;
-    if (compIsForInlining() && (opts.eeFlags & CORJIT_FLG_NETCF_QUIRKS))
-    {
-        stateNetCFQuirks = 0;
-    }
-
-#endif // FEATURE_LEGACYNETCF
-    
     while (codeAddr < codeEndp)
     {
-        unsigned    sz;
-
-        opcode = (OPCODE) getU1LittleEndian(codeAddr);
+        OPCODE opcode = (OPCODE) getU1LittleEndian(codeAddr);
         codeAddr += sizeof(__int8);
         opts.instrCount++;
+        typeIsNormed = false;
 
 DECODE_OPCODE:
 
-        /* Get the size of additional parameters */
-
         if (opcode >= CEE_COUNT)
             BADCODE3("Illegal opcode", ": %02X", (int) opcode);
-
-#ifdef FEATURE_LEGACYNETCF
-
-        // If this is the first non-ldarg, then transition states
-        if ((0 == (stateNetCFQuirks & 0x10000)) && 
-            ((opcode < CEE_LDARG_0) || (opcode > CEE_LDARG_3)) &&
-            (opcode != CEE_LDARG_S) && (opcode != CEE_LDARG) && (opcode != CEE_PREFIX1))
-        {
-            // Maximum number of arguments is 2^16 - 1
-            // so this value will never line up with any ldarg
-            stateNetCFQuirks = 0x10000;
-        }
-
-#endif // FEATURE_LEGACYNETCF
 
         if ((opcode >= CEE_LDARG_0 && opcode <= CEE_STLOC_S) ||
             (opcode >= CEE_LDARG   && opcode <= CEE_STLOC))
         {
             opts.lvRefCount++;
-            ++ldStCount;
         }
-        //Check the rest of the LD/ST ranges
-        else if (opcode >= CEE_LDNULL && opcode <= CEE_LDC_R8)
+
+        if (makeInlineObservations &&
+            (opcode >= CEE_LDNULL) &&
+            (opcode <= CEE_LDC_R8))
         {
             pushedStack.pushConstant();
-            ++ldStCount;
-        }
-        else if ((opcode >= CEE_LDIND_I1 && opcode <= CEE_STIND_R8)
-                 || (opcode >= CEE_LDFLD && opcode <= CEE_STOBJ)
-                 || (opcode >= CEE_LDELEMA && opcode <= CEE_STELEM))
-            //Don't count LDOBJ or LDSTR.  The former isn't exactly a load and the latter has issues with
-            //interning.
-        {
-            ++ldStCount;
-        }
-        else if (opcode == CEE_POP)
-        {
-            ++ldStCount;
         }
 
-        sz = opcodeSizes[opcode];
-
-        if (pSm)
-        {
-            smOpcode = CodeSeqSM::MapToSMOpcode(opcode);
-        }
+        unsigned sz = opcodeSizes[opcode];
 
         switch (opcode)
         {
@@ -4376,22 +4398,24 @@ DECODE_OPCODE:
 
         case CEE_CALL:
         case CEE_CALLVIRT:
-            //If the method has a call followed by a ret, assume that it is
-            //a wrapper method.
-            if (compIsForInlining())
+
+            if (isInlining)
             {
                 //There has to be code after the call, otherwise the inlinee is unverifiable.
                 noway_assert(codeAddr < codeEndp - sz);
+            }
+
+            // If the method has a call followed by a ret, assume that
+            // it is a wrapper method.
+
+            if (makeInlineObservations)
+            {
                 if ((OPCODE) getU1LittleEndian(codeAddr + sz) == CEE_RET)
                 {
-                    compInlineeHints = (InlInlineHints)(compInlineeHints | InlLooksLikeWrapperMethod);
-#ifdef DEBUG
-                    //printf("CALL->RET pattern found in %s\n", info.compFullName);
-#endif
+                    compInlineResult->Note(InlineObservation::CALLEE_LOOKS_LIKE_WRAPPER);
                 }
             }
             break;
-
 
         /* Check for an unconditional jump opcode */
 
@@ -4432,19 +4456,6 @@ DECODE_OPCODE:
             if (codeAddr > codeEndp - sz)
                 goto TOO_FAR;
 
-#ifdef FEATURE_LEGACYNETCF
-
-            if (compIsForInlining()) 
-            {
-                if (stateNetCFQuirks >= 0)
-                {
-                    compInlineResult->setNever("Windows Phone OS 7 compatibility - Inlinee contains control flow");
-                    return;
-                }
-            }
-
-#endif // FEATURE_LEGACYNETCF
-
             /* Compute the target address of the jump */
 
             jmpDist = (sz==1) ? getI1LittleEndian(codeAddr)
@@ -4468,8 +4479,10 @@ DECODE_OPCODE:
 
             fgMarkJumpTarget(jumpTarget, jmpAddr);
 
-            if (compIsForInlining() && opcode != CEE_BR_S && opcode != CEE_BR)
+            if (makeInlineObservations && (opcode != CEE_BR_S) && (opcode != CEE_BR))
+            {
                 goto INL_HANDLE_COMPARE;
+            }
 
             break;
 
@@ -4477,21 +4490,15 @@ DECODE_OPCODE:
 
             seenJump = true;
 
-            if (compIsForInlining())
+            if (makeInlineObservations)
             {
+                compInlineResult->Note(InlineObservation::CALLEE_HAS_SWITCH);
 
-#ifdef FEATURE_LEGACYNETCF
-
-                if (stateNetCFQuirks >= 0)
+                // Fail fast, if we're inlining and can't handle this.
+                if (isInlining && compInlineResult->IsFailure()) 
                 {
-                    compInlineResult->setNever("Windows Phone OS 7 compatibility - Inlinee contains control flow");
                     return;
                 }
-
-#endif // FEATURE_LEGACYNETCF
-
-                compInlineResult->setNever("Inlinee contains SWITCH instruction");
-                return;
             }
 
             // Make sure we don't go past the end reading the number of cases
@@ -4547,20 +4554,6 @@ DECODE_OPCODE:
         case CEE_TAILCALL:
             if (codeAddr >= codeEndp)
                 goto TOO_FAR;
-
-#ifdef FEATURE_LEGACYNETCF
-
-            if (compIsForInlining())
-            {
-                if (stateNetCFQuirks >= 0)
-                {
-                    compInlineResult->setNever("Windows Phone OS 7 compatibility - Inlinee contains prefix");
-                    return;
-                }
-            }
-
-#endif // FEATURE_LEGACYNETCF
-
             break;
 
         case CEE_STARG:
@@ -4573,20 +4566,6 @@ DECODE_OPCODE:
 
         // Other opcodes that we know inliner won't handle.
         case CEE_THROW:
-
-#ifdef FEATURE_LEGACYNETCF
-
-            if (compIsForInlining())
-            {
-                if (stateNetCFQuirks >= 0)
-                {
-                    compInlineResult->setNever("Windows Phone OS 7 compatibility - Inlinee contains throw");
-                    return;
-                }
-            }
-
-#endif // FEATURE_LEGACYNETCF
-
             if (seenJump)
                 break;
         case CEE_ISINST:
@@ -4600,7 +4579,7 @@ DECODE_OPCODE:
 
         case CEE_JMP:
 #if !defined(_TARGET_X86_) && !defined(_TARGET_ARM_)
-            if (!compIsForInlining())
+            if (!isInlining)
             {
                 // We transform this into a set of ldarg's + tail call and
                 // thus may push more onto the stack than originally thought.
@@ -4629,18 +4608,18 @@ DECODE_OPCODE:
         case CEE_MKREFANY:
         case CEE_RETHROW:
             //Consider making this only for not force inline.
-            if (compIsForInlining())
+            if (makeInlineObservations)
             {
-                const char* message;
-#ifdef DEBUG
-                message = (char*)compAllocator->nraAlloc(128);
-                sprintf((char*)message, "Unsupported opcode for inlining: %s\n",
-                        opcodeNames[opcode]);
-#else
-                message = "Unsupported opcode for inlining";
-#endif
-                compInlineResult->setNever(message);
-                return;
+                // Arguably this should be NoteFatal, but the legacy behavior is
+                // to ignore this for the prejit root.
+                compInlineResult->Note(InlineObservation::CALLEE_UNSUPPORTED_OPCODE);
+
+                // Fail fast if we're inlining...
+                if (isInlining)
+                {
+                    assert(compInlineResult->IsFailure());
+                    return;
+                }
             }
             break;
 
@@ -4661,25 +4640,28 @@ DECODE_OPCODE:
             goto ARG_PUSH;
 
         case CEE_LDLEN:
-            if (compIsForInlining())
+            if (makeInlineObservations)
+            {
                 pushedStack.pushArrayLen();
-
+            }
             break;
+
         case CEE_CEQ:
         case CEE_CGT:
         case CEE_CGT_UN:
         case CEE_CLT:
         case CEE_CLT_UN:
-            if (compIsForInlining())
+            if (makeInlineObservations)
+            {
                 goto INL_HANDLE_COMPARE;
-
+            }
             break;
 
         default:
             break;
 
 INL_HANDLE_COMPARE:
-            noway_assert(compIsForInlining());
+            assert(makeInlineObservations);
             //We're looking at a comparison.  There are several cases that we would like to recognize for
             //inlining:
             //  Static cases
@@ -4688,7 +4670,6 @@ INL_HANDLE_COMPARE:
             //
             //  Dynamic cases
             //      - An incoming argument which is a constant is used in a comparison.
-
             {
                 if (!pushedStack.isStackTwoDeep())
                 {
@@ -4701,14 +4682,17 @@ INL_HANDLE_COMPARE:
                             unsigned slot0 = pushedStack.getSlot0();
                             if (fgStack::isArgument(slot0))
                             {
-                                compInlineeHints = (InlInlineHints)(compInlineeHints | InlArgFeedsConstantTest);
-                                //Check for the double whammy of an incoming constant argument feeding a
-                                //constant test.
-                                varNum = fgStack::slotTypeToArgNum(slot0);
-                                if (impInlineInfo->inlArgInfo[varNum].argNode->OperIsConst())
+                                compInlineResult->Note(InlineObservation::CALLEE_ARG_FEEDS_CONSTANT_TEST);
+
+                                if (isInlining)
                                 {
-                                    compInlineeHints = (InlInlineHints)(compInlineeHints
-                                                                        | InlIncomingConstFeedsCond);
+                                    // Check for the double whammy of an incoming constant argument
+                                    // feeding a constant test.
+                                    varNum = fgStack::slotTypeToArgNum(slot0);
+                                    if (impInlineInfo->inlArgInfo[varNum].argNode->OperIsConst())
+                                    {
+                                        compInlineResult->Note(InlineObservation::CALLSITE_CONSTANT_ARG_FEEDS_TEST);
+                                    }
                                 }
                             }
                         }
@@ -4719,85 +4703,59 @@ INL_HANDLE_COMPARE:
                 unsigned slot0 = pushedStack.getSlot0();
                 unsigned slot1 = pushedStack.getSlot1();
 
-                //Arg feeds constant test.
+                // Arg feeds constant test.
                 if ((fgStack::isConstant(slot0) && fgStack::isArgument(slot1))
                     ||(fgStack::isConstant(slot1) && fgStack::isArgument(slot0)))
                 {
-                    compInlineeHints = (InlInlineHints)(compInlineeHints | InlArgFeedsConstantTest);
+                    compInlineResult->Note(InlineObservation::CALLEE_ARG_FEEDS_CONSTANT_TEST);
                 }
-                //Arg feeds range check
+
+                // Arg feeds range check
                 if ((fgStack::isArrayLen(slot0) && fgStack::isArgument(slot1))
                     ||(fgStack::isArrayLen(slot1) && fgStack::isArgument(slot0)))
                 {
-                    compInlineeHints = (InlInlineHints)(compInlineeHints | InlArgFeedsRngChk);
+                    compInlineResult->Note(InlineObservation::CALLEE_ARG_FEEDS_RANGE_CHECK);
                 }
 
-                //Check for an incoming arg that's a constant.
-                if (fgStack::isArgument(slot0))
+                // Check for an incoming arg that's a constant.
+                if (isInlining)
                 {
-                    varNum = fgStack::slotTypeToArgNum(slot0);
-                    if (impInlineInfo->inlArgInfo[varNum].argNode->OperIsConst())
+                    if (fgStack::isArgument(slot0))
                     {
-                        compInlineeHints = (InlInlineHints)(compInlineeHints | InlIncomingConstFeedsCond);
+                        varNum = fgStack::slotTypeToArgNum(slot0);
+                        if (impInlineInfo->inlArgInfo[varNum].argNode->OperIsConst())
+                        {
+                            compInlineResult->Note(InlineObservation::CALLSITE_CONSTANT_ARG_FEEDS_TEST);
+                        }
                     }
-                }
-                if (fgStack::isArgument(slot1))
-                {
-                    varNum = fgStack::slotTypeToArgNum(slot1);
-                    if (impInlineInfo->inlArgInfo[varNum].argNode->OperIsConst())
+
+                    if (fgStack::isArgument(slot1))
                     {
-                        compInlineeHints = (InlInlineHints)(compInlineeHints | InlIncomingConstFeedsCond);
+                        varNum = fgStack::slotTypeToArgNum(slot1);
+                        if (impInlineInfo->inlArgInfo[varNum].argNode->OperIsConst())
+                        {
+                            compInlineResult->Note(InlineObservation::CALLSITE_CONSTANT_ARG_FEEDS_TEST);
+                        }
                     }
                 }
             }
             break;
 ARG_PUSH:
-            if (compIsForInlining())
+            if (makeInlineObservations)
             {
                 pushedStack.pushArgument(varNum);
-
-#ifdef FEATURE_LEGACYNETCF
-
-                if (stateNetCFQuirks >= 0)
-                {
-                    unsigned expectedVarNum = (unsigned)stateNetCFQuirks;
-                    stateNetCFQuirks++;
-                    if (varNum != expectedVarNum)
-                    {
-                        compInlineResult->setNever("Windows Phone OS 7 compatibility - out of order ldarg");
-                        return;
-                    }
-                }
-
-#endif // FEATURE_LEGACYNETCF
-
-            }   
+            }
 
             break;
 
 ADDR_TAKEN:
-
-#ifdef FEATURE_LEGACYNETCF
-
-            if (compIsForInlining())
-            {
-                if (stateNetCFQuirks >= 0)
-                {
-                    compInlineResult->setNever("Windows Phone OS 7 compatibility - address taken");
-                    return;
-                }
-            }
-
-#endif // FEATURE_LEGACYNETCF
-
             noway_assert(sz == sizeof(BYTE) || sz == sizeof(WORD));
             if (codeAddr > codeEndp - sz)
                 goto TOO_FAR;
             varNum = (sz == sizeof(BYTE)) ? getU1LittleEndian(codeAddr)
                                           : getU2LittleEndian(codeAddr);
 
-
-            if (compIsForInlining())
+            if (isInlining)
             {
                 if (opcode == CEE_LDLOCA   ||
                     opcode == CEE_LDLOCA_S)
@@ -4837,11 +4795,8 @@ ADDR_TAKEN:
                     varNum = compMapILargNum(varNum); // account for possible hidden param
                 }
 
-                if (pSm)
-                {
-                    varType = (var_types)lvaTable[varNum].lvType;
-                    ti      = lvaTable[varNum].lvVerTypeInfo;
-                }
+                varType = (var_types)lvaTable[varNum].lvType;
+                ti      = lvaTable[varNum].lvVerTypeInfo;
 
                 if (!varTypeIsStruct(&lvaTable[varNum]) && // We will put structs in the stack anyway
                                                                 // And changing the addrTaken of a local
@@ -4876,44 +4831,35 @@ ADDR_TAKEN:
                         // This may be conservative, but probably not very.
                     }
                 }
-            } // compIsForInlining()
+            } // isInlining
 
-            if (pSm                 &&
-                ti.IsValueClass()      &&
-                !varTypeIsStruct(varType))
-            {
-#ifdef DEBUG
-                if (verbose)
-                    printf("Loading address of normed V%02u at IL offset [0x%x]\n", varNum, codeAddr-codeBegp-1);
-#endif
-
-                if (smOpcode == SM_LDARGA_S)
-                    smOpcode = SM_LDARGA_S_NORMED;
-                else if (smOpcode == SM_LDLOCA_S)
-                    smOpcode = SM_LDLOCA_S_NORMED;
-            }
-
+            typeIsNormed = ti.IsValueClass() && !varTypeIsStruct(varType);
             break;
 
 ARG_WRITE:
-            if (compIsForInlining())
+            if (makeInlineObservations)
             {
-
-#ifdef DEBUG
-                if (verbose)
-                {
-                    printf("\n\nInline expansion aborted due to opcode at offset [%02u] which writes to an argument\n",
-                           codeAddr-codeBegp-1);
-                }
-#endif
-
                 /* The inliner keeps the args as trees and clones them.  Storing the arguments breaks that
                  * simplification.  To allow this, flag the argument as written to and spill it before
                  * inlining.  That way the STARG in the inlinee is trivial. */
-                compInlineResult->setNever("Inlinee writes to an argument");
-                return;
+
+                // Arguably this should be NoteFatal, but the legacy behavior is
+                // to ignore this for the prejit root.
+                compInlineResult->Note(InlineObservation::CALLEE_STORES_TO_ARGUMENT);
+
+                // Fail fast, if inlining
+                if (isInlining)
+                {
+                    assert(compInlineResult->IsFailure());
+                    JITDUMP("INLINER: Inline expansion aborted; opcode at offset [%02u]"
+                            " writes to an argument\n", codeAddr-codeBegp-1);
+                    return;
+                }
             }
-            else
+
+            // In non-inline cases, note written-to locals.
+
+            if (!isInlining)
             {
                 noway_assert(sz == sizeof(BYTE) || sz == sizeof(WORD));
                 if (codeAddr > codeEndp - sz)
@@ -4937,20 +4883,13 @@ ARG_WRITE:
 _SkipCodeAddrAdjustment:
         ;
 
-        if (pSm)
+        if (makeInlineObservations)
         {
-            noway_assert(smOpcode<SM_COUNT);
-            noway_assert(smOpcode != SM_PREFIX_N);
-
-#ifdef DEBUG
-            ++pSm->instrCount;
-#endif
-
-            pSm->Run(smOpcode DEBUGARG(0));
+            InlineObservation obs = typeIsNormed ?
+                InlineObservation::CALLEE_OPCODE_NORMED : InlineObservation::CALLEE_OPCODE;
+            compInlineResult->NoteInt(obs, opcode);
         }
-
     }
-
 
     if  (codeAddr != codeEndp)
     {
@@ -4959,72 +4898,50 @@ TOO_FAR:
                  " at offset %04X", (IL_OFFSET)(codeAddr - codeBegp));
     }
 
-    //If this function is mostly loads and stores, we should try harder to inline it.  You can't just use
-    //the percentage test because if the method has 8 instructions and 6 are loads, it's only 75% loads.
-    //This allows for CALL, RET, and one more non-ld/st instruction.
-    if ((opts.instrCount - ldStCount) < 4 || ((double)ldStCount/(double)opts.instrCount) > .90)
+    if (makeInlineObservations)
     {
-        compInlineeHints = (InlInlineHints)(compInlineeHints | InlMethodMostlyLdSt);
-    }
+        compInlineResult->Note(InlineObservation::CALLEE_END_OPCODE_SCAN);
 
-    if (pSm)
-    {
-        pSm->End();
-        noway_assert(pSm->NativeSize != NATIVE_SIZE_INVALID);
-        compNativeSizeEstimate = pSm->NativeSize;
-
-#ifdef DEBUG
-        if (verbose)
+        // If the inline is viable and discretionary, do the
+        // profitability screening.
+        if (compInlineResult->IsDiscretionaryCandidate())
         {
-            printf("\n\ncompNativeSizeEstimate=%d\n", compNativeSizeEstimate);
-        }
-#endif
+            // Make some callsite specific observations that will feed
+            // into the profitability model.
+            impMakeDiscretionaryInlineObservations(impInlineInfo, compInlineResult);
 
-        if (compIsForInlining())
-        {
+            // None of those observations should have changed the
+            // inline's viability.
+            assert(compInlineResult->IsCandidate());
 
-            // If the inlining decision was obvious from the size of the IL,
-            // it should have been made earlier.
-            noway_assert(codeSize > ALWAYS_INLINE_SIZE && codeSize <= impInlineSize);
-
-            // Make an inlining decision based on the estimated native size.
-            int callsiteNativeSizeEstimate = impEstimateCallsiteNativeSize(&impInlineInfo->inlineCandidateInfo->methInfo);
-
-            impCanInlineNative(callsiteNativeSizeEstimate,
-                               compNativeSizeEstimate,
-                               compInlineeHints,
-                               impInlineInfo,
-                               compInlineResult);
-
-            if (compInlineResult->isFailure())
+            if (isInlining)
             {
-#ifdef DEBUG
-                if (verbose)
+                // Assess profitability...
+                CORINFO_METHOD_INFO* methodInfo = &impInlineInfo->inlineCandidateInfo->methInfo;
+                compInlineResult->DetermineProfitability(methodInfo);
+                
+                if (compInlineResult->IsFailure())
                 {
-                    printf("\n\nInline expansion aborted because of impCanInlineNative: %s %s\n",
-                       compInlineResult->isNever() ? "INLINE_NEVER" : "INLINE_FAIL",
-                       compInlineResult->reason());
+                    JITDUMP("\n\nInline expansion aborted, inline not profitable\n");
+                    return;
                 }
-#endif
-
-                return;
+                else
+                {
+                    // The inline is still viable.
+                    assert(compInlineResult->IsCandidate());
+                }
+            }
+            else
+            {
+                // Prejit root case. Profitability assessment for this
+                // is done over in compCompileHelper.
             }
         }
     }
-    else 
-    {
-       if (compIsForInlining()) 
-       {
-          // This method's IL was small enough that we didn't use the size model to estimate
-          // inlinability. Note that as the latest candidate reason.
-          compInlineResult->setCandidate("below ALWAYS_INLINE size");
-       }
-    }
 
-
-    if (!compIsForInlining() && // None of the local vars in the inlinee should have address taken or been written to.
-                                // Therefore we should NOT need to enter this "if" statement.
-        !info.compIsStatic)
+    // None of the local vars in the inlinee should have address taken or been written to.
+    // Therefore we should NOT need to enter this "if" statement.
+    if (!isInlining && !info.compIsStatic)
     {
         //If we're verifying, then we can't do this.  This flag makes the method unverifiable from the
         //Importer's point of view.
@@ -5637,19 +5554,6 @@ GOT_ENDP:
             noway_assert(jmpAddr != DUMMY_INIT(BAD_IL_OFFSET));
             curBBdesc->bbJumpOffs = jmpAddr;
             break;
-
-#ifdef FEATURE_LEGACYNETCF
-        case BBJ_EHFILTERRET:
-            if (opts.eeFlags & CORJIT_FLG_NETCF_QUIRKS)
-            {
-                // NetCF incorrectly allowed sequence of endfilter instructions at the end of the filter. Ignore the redundant endfilter instructions.
-                while (codeAddr + 1 < codeEndp && getU1LittleEndian(codeAddr) == CEE_PREFIX1 && getU1LittleEndian(codeAddr+1) == (CEE_ENDFILTER & 0xFF))
-                    codeAddr += 2;
-
-                nxtBBoffs = (IL_OFFSET)(codeAddr - codeBegp);
-            }
-            break;
-#endif
 
         default:
             break;
@@ -6762,6 +6666,19 @@ bool         Compiler::fgInDifferentRegions(BasicBlock *blk1, BasicBlock *blk2)
     return ((blk1->bbFlags & BBF_COLD)!= (blk2->bbFlags & BBF_COLD));
 }
 
+bool         Compiler::fgIsBlockCold(BasicBlock *blk)
+{
+    noway_assert(blk != NULL);
+
+    if (fgFirstColdBlock == NULL)
+    {
+        return false;
+    }
+
+    return ((blk->bbFlags & BBF_COLD) != 0);
+}
+
+
 /*****************************************************************************
  * This function returns true if tree is a GT_COMMA node with a call
  * that unconditionally throws an exception
@@ -6792,7 +6709,7 @@ bool                Compiler::fgIsCommaThrow(GenTreePtr tree,
 GenTreePtr          Compiler::fgIsIndirOfAddrOfLocal(GenTreePtr tree)
 {
     GenTreePtr res = nullptr;
-    if (tree->OperGet() == GT_LDOBJ || tree->OperIsIndir())
+    if (tree->OperGet() == GT_OBJ || tree->OperIsIndir())
     {
         GenTreePtr addr = tree->gtOp.gtOp1;
 
@@ -7119,12 +7036,19 @@ GenTreePtr    Compiler::fgOptimizeDelegateConstructor(GenTreePtr call, CORINFO_C
             {
                 // The first argument of the helper is delegate this pointer
                 GenTreeArgList* helperArgs = gtNewArgList(call->gtCall.gtCallObjp);
+                CORINFO_CONST_LOOKUP entryPoint;
 
                 // The second argument of the helper is the target object pointers
                 helperArgs->gtOp.gtOp2 = gtNewArgList(call->gtCall.gtCallArgs->gtOp.gtOp1);
 
                 call = gtNewHelperCallNode(CORINFO_HELP_READYTORUN_DELEGATE_CTOR, TYP_VOID, GTF_EXCEPT, helperArgs);
-                call->gtCall.gtEntryPoint = targetMethod->gtFptrVal.gtDelegateCtor;
+#if COR_JIT_EE_VERSION > 460
+                info.compCompHnd->getReadyToRunDelegateCtorHelper(targetMethod->gtFptrVal.gtLdftnResolvedToken, clsHnd, &entryPoint);
+#else
+                info.compCompHnd->getReadyToRunHelper(targetMethod->gtFptrVal.gtLdftnResolvedToken,
+                    CORINFO_HELP_READYTORUN_DELEGATE_CTOR, &entryPoint);
+#endif
+                call->gtCall.setEntryPoint(entryPoint);
             }
         }
         else
@@ -7575,8 +7499,7 @@ GenTreePtr Compiler::fgGetCritSectOfStaticMethod()
 
 void                Compiler::fgAddSyncMethodEnterExit()
 {
-    if ((info.compFlags & CORINFO_FLG_SYNCH) == 0)
-        return;
+    assert((info.compFlags & CORINFO_FLG_SYNCH) != 0);
 
     // We need to do this transformation before funclets are created.
     assert(!fgFuncletsCreated);
@@ -7886,6 +7809,72 @@ void                Compiler::fgConvertSyncReturnToLeave(BasicBlock* block)
 
 #endif // !_TARGET_X86_
 
+//------------------------------------------------------------------------
+// fgAddReversePInvokeEnterExit: Add enter/exit calls for reverse PInvoke methods
+//
+// Arguments:
+//      None.
+//
+// Return Value:
+//      None.
+
+void Compiler::fgAddReversePInvokeEnterExit()
+{
+    assert(opts.IsReversePInvoke());
+
+#if COR_JIT_EE_VERSION > 460
+    lvaReversePInvokeFrameVar = lvaGrabTempWithImplicitUse(false DEBUGARG("Reverse Pinvoke FrameVar"));
+
+    LclVarDsc* varDsc = &lvaTable[lvaReversePInvokeFrameVar];
+    varDsc->lvType = TYP_BLK;
+    varDsc->lvExactSize = eeGetEEInfo()->sizeOfReversePInvokeFrame;
+
+    GenTreePtr      tree;
+
+    // Add enter pinvoke exit callout at the start of prolog
+
+    tree = gtNewOperNode(GT_ADDR, TYP_I_IMPL, gtNewLclvNode(lvaReversePInvokeFrameVar, TYP_BLK));
+
+    tree = gtNewHelperCallNode(CORINFO_HELP_JIT_REVERSE_PINVOKE_ENTER,
+        TYP_VOID, 0,
+        gtNewArgList(tree));
+
+    fgEnsureFirstBBisScratch();
+
+    fgInsertStmtAtBeg(fgFirstBB, tree);
+
+#ifdef DEBUG
+    if (verbose)
+    {
+        printf("\nReverse PInvoke method - Add reverse pinvoke enter in first basic block [%08p]\n", dspPtr(fgFirstBB));
+        gtDispTree(tree);
+        printf("\n");
+    }
+#endif
+
+    // Add reverse pinvoke exit callout at the end of epilog
+
+    tree = gtNewOperNode(GT_ADDR, TYP_I_IMPL, gtNewLclvNode(lvaReversePInvokeFrameVar, TYP_BLK));
+
+    tree = gtNewHelperCallNode(CORINFO_HELP_JIT_REVERSE_PINVOKE_EXIT,
+        TYP_VOID, 0,
+        gtNewArgList(tree));
+
+    assert(genReturnBB != nullptr);
+
+    fgInsertStmtAtEnd(genReturnBB, tree);
+
+#ifdef DEBUG
+    if (verbose)
+    {
+        printf("\nReverse PInvoke method - Add reverse pinvoke exit in return basic block [%08p]\n", dspPtr(genReturnBB));
+        gtDispTree(tree);
+        printf("\n");
+    }
+#endif
+
+#endif // COR_JIT_EE_VERSION > 460
+}
 
 /*****************************************************************************
  *
@@ -7991,12 +7980,6 @@ void                Compiler::fgAddInternal()
 
     /* Assume we will generate a single shared return sequence */
 
-    // This is the node for the oneReturn statement.
-    // It could be as simple as a CallNode if we only have
-    // only one callout. It will be a comma tree of CallNodes
-    // if we have multiple callouts.
-    //
-    GenTreePtr  oneReturnStmtNode = NULL;
     ULONG       returnWeight      = 0;
     bool        oneReturn;
     bool        allProfWeight;
@@ -8004,13 +7987,13 @@ void                Compiler::fgAddInternal()
     //
     //  We will generate just one epilog (return block)
     //   when we are asked to generate enter/leave callbacks
+    //   or for methods with PInvoke
     //   or for methods calling into unmanaged code
     //   or for synchronized methods.
     //
     if ( compIsProfilerHookNeeded()    ||
-#if INLINE_NDIRECT
          (info.compCallUnmanaged != 0) ||
-#endif
+         opts.IsReversePInvoke() ||
          ((info.compFlags & CORINFO_FLG_SYNCH) != 0))
     {
         // We will generate only one return block
@@ -8088,7 +8071,10 @@ void                Compiler::fgAddInternal()
     // BBJ_RETURN block gets placed at the top-level, not within an EH region. (Otherwise,
     // we'd have to be really careful when creating the synchronized method try/finally
     // not to include the BBJ_RETURN block.)
-    fgAddSyncMethodEnterExit();
+    if ((info.compFlags & CORINFO_FLG_SYNCH) != 0)
+    {
+        fgAddSyncMethodEnterExit();
+    }
 #endif // !_TARGET_X86_
 
     if  (oneReturn)
@@ -8170,9 +8156,7 @@ void                Compiler::fgAddInternal()
         {
             lvaTable[genReturnLocal].lvType = TYP_STRUCT;
             lvaSetStruct(genReturnLocal, info.compMethodInfo->args.retTypeClass, true);
-#if FEATURE_MULTIREG_ARGS_OR_RET
             lvaTable[genReturnLocal].lvIsMultiRegArgOrRet = true;
-#endif
         }
         else
         {
@@ -8202,7 +8186,6 @@ void                Compiler::fgAddInternal()
         genReturnLocal = BAD_VAR_NUM;
     }
 
-#if INLINE_NDIRECT
     if (info.compCallUnmanaged != 0)
     {
         // The P/Invoke helpers only require a frame variable, so only allocate the
@@ -8232,7 +8215,6 @@ void                Compiler::fgAddInternal()
         }
 #endif
     }
-#endif
 
     // Do we need to insert a "JustMyCode" callback?
 
@@ -8380,34 +8362,13 @@ void                Compiler::fgAddInternal()
                                        gtNewArgList(tree));
         }
 
-        /* Add the exitCrit expression to the oneReturnStmtNode */
-        if (oneReturnStmtNode != NULL)
-        {
-            //
-            // We add the newly created "tree" to op1, so we can evaluate the last added
-            // expression first.
-            //
-            oneReturnStmtNode = gtNewOperNode(GT_COMMA,
-                                              TYP_VOID,
-                                              tree,
-                                              oneReturnStmtNode);
-
-        }
-        else
-        {
-            oneReturnStmtNode = tree;
-        }
-
+        fgInsertStmtAtEnd(genReturnBB, tree);
 
 #ifdef DEBUG
         if (verbose)
         {
             printf("\nSynchronized method - Add exit expression ");
             printTreeID(tree);
-            printf(" to oneReturnStmtNode ");
-            printTreeID(oneReturnStmtNode);
-            printf("\nCurrent oneReturnStmtNode is\n");
-            gtDispTree(oneReturnStmtNode);
             printf("\n");
         }
 #endif
@@ -8451,6 +8412,11 @@ void                Compiler::fgAddInternal()
 
     }
 
+    if (opts.IsReversePInvoke())
+    {
+        fgAddReversePInvokeEnterExit();
+    }
+
     //
     //  Add 'return' expression to the return block if we made it as "oneReturn" before.
     //
@@ -8461,13 +8427,6 @@ void                Compiler::fgAddInternal()
         //
         // Make the 'return' expression.
         //
-
-        // spill any value that is currently in the oneReturnStmtNode
-        if (oneReturnStmtNode != nullptr)
-        {
-            fgInsertStmtAtEnd(genReturnBB, oneReturnStmtNode);
-            oneReturnStmtNode = nullptr;
-        }
 
         //make sure to reload the return value as part of the return (it is saved by the "real return").
         if (genReturnLocal != BAD_VAR_NUM)
@@ -10193,8 +10152,7 @@ void                Compiler::fgCompactBlocks(BasicBlock* block, BasicBlock* bNe
 #endif
 
 #if DEBUG
-    static ConfigDWORD fSlowDebugChecksEnabled;
-    if (fSlowDebugChecksEnabled.val(CLRConfig::INTERNAL_JitSlowDebugChecksEnabled) != 0)
+    if (JitConfig.JitSlowDebugChecksEnabled() != 0)
     {
         // Make sure that the predecessor lists are accurate
         fgDebugCheckBBlist();
@@ -17557,10 +17515,17 @@ BasicBlock*         Compiler::fgAddCodeRef(BasicBlock*      srcBlk,
                                            SpecialCodeKind  kind,
                                            unsigned         stkDepth)
 {
-    /* For debuggable code, genJumpToThrowHlpBlk() will generate the 'throw'
-       code inline. It has to be kept consistent with fgAddCodeRef() */
+    // Record that the code will call a THROW_HELPER
+    // so on Windows Amd64 we can allocate the 4 outgoing
+    // arg slots on the stack frame if there are no other calls.
+    compUsesThrowHelper = true;
+
+    // For debuggable code, genJumpToThrowHlpBlk() will generate the 'throw'
+    // code inline. It has to be kept consistent with fgAddCodeRef()
     if (opts.compDbgCode)
-        return NULL;
+    {
+        return nullptr;
+    }
 
     const static
     BBjumpKinds jumpKinds[] =
@@ -17912,25 +17877,6 @@ void                Compiler::fgSetTreeSeqHelper(GenTreePtr tree)
 
             fgSetTreeSeqFinish(tree);
             return;
-        }
-
-        /* Handle the case of an LDOBJ with a field list */
-
-        GenTreePtr lclVarTree;
-        if ((oper == GT_LDOBJ) &&
-            tree->gtLdObj.gtFldTreeList != NULL &&
-            impIsAddressInLocal(tree->gtOp.gtOp1, &lclVarTree))
-        {
-            GenTreePtr* fldTreeList = tree->gtLdObj.gtFldTreeList;
-            unsigned fieldCount = lvaTable[lclVarTree->gtLclVarCommon.gtLclNum].lvFieldCnt;
-
-            for (unsigned i = 0; i < fieldCount; i++)
-            {
-                if (fldTreeList[i] != NULL)
-                {
-                    fgSetTreeSeqHelper(fldTreeList[i]);
-                }
-            }
         }
 
         /* Check for a nilary operator */
@@ -18727,6 +18673,13 @@ void Compiler::fgInsertTreeInListBefore(GenTree* tree, GenTree* insertionPoint, 
     if (beforeTree != nullptr)
     {
         beforeTree->gtNext = first;
+
+        // If the insertionPoint is the gtStatementList,
+        // update the gtStatemenList to include the newly inserted tree.
+        if (stmt->gtStmtList == insertionPoint)
+        {
+            stmt->gtStmtList = first;
+        }
     }
     else
     {
@@ -19058,21 +19011,15 @@ FILE*              Compiler::fgOpenFlowGraphFile(bool*  wbDontClose, Phases phas
 #ifdef DEBUG
     if (opts.eeFlags & CORJIT_FLG_PREJIT)
     {
-        static ConfigString sNgenDumpFg;
-        pattern = sNgenDumpFg.val(CLRConfig::INTERNAL_NgenDumpFg);
-        static ConfigString sNgenDumpFgFile;
-        filename = sNgenDumpFgFile.val(CLRConfig::INTERNAL_NgenDumpFgFile);
-        static ConfigString sNgenDumpFgDir;
-        pathname = sNgenDumpFgDir.val(CLRConfig::INTERNAL_NgenDumpFgDir);
+        pattern = JitConfig.NgenDumpFg();
+        filename = JitConfig.NgenDumpFgFile();
+        pathname = JitConfig.NgenDumpFgDir();
     }
     else
     {
-        static ConfigString sJitDumpFg;
-        pattern = sJitDumpFg.val(CLRConfig::INTERNAL_JitDumpFg);
-        static ConfigString sJitDumpFgFile;
-        filename = sJitDumpFgFile.val(CLRConfig::INTERNAL_JitDumpFgFile);
-        static ConfigString sJitDumpFgDir;
-        pathname = sJitDumpFgDir.val(CLRConfig::INTERNAL_JitDumpFgDir);
+        pattern = JitConfig.JitDumpFg();
+        filename = JitConfig.JitDumpFgFile();
+        pathname = JitConfig.JitDumpFgDir();
     }
 #endif // DEBUG
 
@@ -19085,8 +19032,7 @@ FILE*              Compiler::fgOpenFlowGraphFile(bool*  wbDontClose, Phases phas
     if (wcslen(pattern) == 0)
         return NULL;
 
-    static ConfigString sJitDumpFgPhase;
-    LPCWSTR phasePattern = sJitDumpFgPhase.val(CLRConfig::INTERNAL_JitDumpFgPhase);
+    LPCWSTR phasePattern = JitConfig.JitDumpFgPhase();
     LPCWSTR phaseName = PhaseShortNames[phase];
     if (phasePattern == 0)
     {
@@ -19281,7 +19227,7 @@ ONE_FILE_PER_METHOD:;
     }
     else if (wcscmp(filename, W("stdout")) == 0)
     {
-        fgxFile = stdout;
+        fgxFile = jitstdout;
         *wbDontClose = true;
     }
     else if (wcscmp(filename, W("stderr")) == 0)
@@ -19335,22 +19281,21 @@ ONE_FILE_PER_METHOD:;
 //    MSAGL has also been open-sourced to https://github.com/Microsoft/automatic-graph-layout.git.
 //
 //    Here are the config values that control it:
-//      COMPLUS_JitDumpFg       A string (ala the COMPLUS_JitDump string) indicating what methods to dump flowgraphs for.
-//      COMPLUS_JitDumpFgDir    A path to a directory into which the flowgraphs will be dumped.
-//      COMPLUS_JitDumpFgFile   The filename to use. The default is "default.[xml|dot]".
+//      COMPlus_JitDumpFg       A string (ala the COMPlus_JitDump string) indicating what methods to dump flowgraphs for.
+//      COMPlus_JitDumpFgDir    A path to a directory into which the flowgraphs will be dumped.
+//      COMPlus_JitDumpFgFile   The filename to use. The default is "default.[xml|dot]".
 //                              Note that the new graphs will be appended to this file if it already exists.
-//      COMPLUS_JitDumpFgPhase  Phase(s) after which to dump the flowgraph.
+//      COMPlus_JitDumpFgPhase  Phase(s) after which to dump the flowgraph.
 //                              Set to the short name of a phase to see the flowgraph after that phase.
 //                              Leave unset to dump after COLD-BLK (determine first cold block) or set to * for all phases.
-//      COMPLUS_JitDumpFgDot    Set to non-zero to emit Dot instead of Xml Flowgraph dump. (Default is xml format.)
+//      COMPlus_JitDumpFgDot    Set to non-zero to emit Dot instead of Xml Flowgraph dump. (Default is xml format.)
 
 bool               Compiler::fgDumpFlowGraph(Phases phase)
 {
     bool    result    = false;
     bool    dontClose = false;
-    static ConfigDWORD fJitDumpFgDot;
     bool    createDotFile = false;
-    if (fJitDumpFgDot.val(CLRConfig::INTERNAL_JitDumpFgDot))
+    if (JitConfig.JitDumpFgDot())
     {
         createDotFile = true;
     }
@@ -19621,7 +19566,7 @@ bool               Compiler::fgDumpFlowGraph(Phases phase)
 
     if (dontClose)
     {
-        // fgxFile is stdout or stderr
+        // fgxFile is jitstdout or stderr
         fprintf(fgxFile, "\n");
     }
     else
@@ -20964,27 +20909,6 @@ void Compiler::fgDebugCheckNodeLinks(BasicBlock* block, GenTree* node)
         {
             GenTreePtr lclVarTree;
             expectedPrevTree = tree->gtOp.gtOp1;
-            if ((tree->gtOper == GT_LDOBJ) &&
-                (tree->gtLdObj.gtFldTreeList != NULL) &&
-                impIsAddressInLocal(tree->gtOp.gtOp1, &lclVarTree))
-            {
-                GenTreePtr* fldTreeList = tree->gtLdObj.gtFldTreeList;
-                GenTreePtr prev = NULL;
-                unsigned fieldCount = lvaTable[lclVarTree->gtLclVarCommon.gtLclNum].lvFieldCnt;
-
-                for (unsigned i = 0; i < fieldCount; i++)
-                {
-                    if (fldTreeList[i] != NULL)
-                    {
-                        if (prev != NULL)
-                        {
-                            noway_assert(fldTreeList[i]->gtPrev == prev);
-                        }
-                        prev = fldTreeList[i];
-                    }
-                }
-                noway_assert(lclVarTree->gtPrev == prev);
-            }
         }
         else if (tree->OperIsBinary() && tree->gtOp.gtOp1)
         {
@@ -21455,33 +21379,52 @@ void Compiler::fgRemoveContainedEmbeddedStatements(GenTreePtr tree, GenTreeStmt*
     }
 }
 
-/*****************************************************************************
- * Check if we have a recursion loop or if the recursion is too deep while doing the inlining.
- * Return true if a recursion loop is found or if the inlining recursion is too deep.
- * Also return the depth.
- */
+//------------------------------------------------------------------------
+// fgCheckForInlineDepthAndRecursion: compute depth of the candidate, and
+// check for recursion.
+//
+// Return Value:
+//    The depth of the inline candidate. The root method is a depth 0, top-level
+//    candidates at depth 1, etc.
+//
+// Notes:
+//    We generally disallow recursive inlines by policy. However, they are
+//    supported by the underlying machinery.
+//
+//    Likewise the depth limit is a policy consideration, and serves mostly
+//    as a safeguard to prevent runaway inlining of small methods.
 
-bool          Compiler::fgIsUnboundedInlineRecursion(inlExpPtr               expLst,
-                                                     BYTE*                   ilCode,
-                                                     DWORD*                  finalDepth)
+unsigned     Compiler::fgCheckInlineDepthAndRecursion(InlineInfo* inlineInfo)
 {
-    const DWORD MAX_INLINING_RECURSION_DEPTH = 20;
-    DWORD depth = 0;
-    bool result = false;
+    BYTE*          candidateCode = inlineInfo->inlineCandidateInfo->methInfo.ILCode;
+    InlineContext* inlineContext = inlineInfo->iciStmt->gtStmt.gtInlineContext;
+    InlineResult*  inlineResult  = inlineInfo->inlineResult;
 
-    for (; expLst != nullptr; expLst = expLst->ixlParent)
+    // There should be a context for all candidates.
+    assert(inlineContext != nullptr);
+    int depth = 0;
+
+    for (; inlineContext != nullptr; inlineContext = inlineContext->GetParent())
     {
-        // Hard limit just to catch pathological cases
+
         depth++;
-        if  ((expLst->ixlCode == ilCode) || (depth > MAX_INLINING_RECURSION_DEPTH))
+
+        if (inlineContext->GetCode() == candidateCode)
         {
-           result = true;
-           break;
+            // This inline candidate has the same IL code buffer as an already
+            // inlined method does.
+            inlineResult->NoteFatal(InlineObservation::CALLSITE_IS_RECURSIVE);
+            break;
+        }
+
+        if (depth > InlineStrategy::IMPLEMENTATION_MAX_INLINE_DEPTH)
+        {
+            break;
         }
     }
 
-    *finalDepth = depth;
-    return result;
+    inlineResult->NoteInt(InlineObservation::CALLSITE_DEPTH, depth);
+    return depth;
 }
 
 /*****************************************************************************
@@ -21504,11 +21447,7 @@ void                Compiler::fgInline()
     noway_assert(block != nullptr);
 
     // Set the root inline context on all statements
-    inlExpLst* expDsc = new (this, CMK_Inlining) inlExpLst();
-
-#if defined(DEBUG)
-    expDsc->methodName = info.compFullName;
-#endif
+    InlineContext* rootContext = m_inlineStrategy->GetRootContext();
 
     for (; block != nullptr; block = block->bbNext)
     {
@@ -21516,7 +21455,7 @@ void                Compiler::fgInline()
              stmt;
              stmt = stmt->gtNextStmt)
         {
-           stmt->gtInlineExpList = expDsc;
+            stmt->gtInlineContext = rootContext;
         }
     }
 
@@ -21538,18 +21477,28 @@ void                Compiler::fgInline()
         {
             expr = stmt->gtStmtExpr;
 
-            // See if we can expand the inline candidate.
+            // See if we can expand the inline candidate
             if ((expr->gtOper == GT_CALL) && ((expr->gtFlags & GTF_CALL_INLINE_CANDIDATE) != 0))
             {
+                GenTreeCall* call = expr->AsCall();
+                InlineResult inlineResult(this, call, stmt->gtInlineContext, "fgInline");
+
                 fgMorphStmt = stmt;
 
-                fgMorphCallInline(expr);
+                fgMorphCallInline(call, &inlineResult);
 
                 if (stmt->gtStmtExpr->IsNothingNode())
                 {
                     fgRemoveStmt(block, stmt);
                     continue;
                 }
+            }
+            else
+            {
+#ifdef DEBUG
+                // Look for non-candidates.
+                fgWalkTreePre(&stmt->gtStmtExpr, fgFindNonInlineCandidate, stmt);
+#endif
             }
 
             // See if we need to replace the return value place holder.
@@ -21603,14 +21552,99 @@ void                Compiler::fgInline()
         fgDispHandlerTab();
     }
 
-    if  (verbose || (fgInlinedCount > 0 && fgPrintInlinedMethods))
+    if  (verbose || fgPrintInlinedMethods)
     {
        printf("**************** Inline Tree\n");
-       expDsc->Dump();
+       m_inlineStrategy->Dump();
     }
 
 #endif // DEBUG
 }
+
+#ifdef DEBUG
+
+//------------------------------------------------------------------------
+// fgFindNonInlineCandidate: tree walk helper to ensure that a tree node
+// that is not an inline candidate is noted as a failed inline.
+//
+// Arguments:
+//    pTree - pointer to pointer tree node being walked
+//    data  - contextual data for the walk
+//
+// Return Value:
+//    walk result
+//
+// Note:
+//    Invokes fgNoteNonInlineCandidate on the nodes it finds.
+
+Compiler::fgWalkResult      Compiler::fgFindNonInlineCandidate(GenTreePtr* pTree,
+                                                               fgWalkData* data)
+{
+    GenTreePtr tree = *pTree;
+    if (tree->gtOper == GT_CALL)
+    {
+        Compiler*    compiler = data->compiler;
+        GenTreePtr   stmt     = (GenTreePtr) data->pCallbackData;
+        GenTreeCall* call     = tree->AsCall();
+
+        compiler->fgNoteNonInlineCandidate(stmt, call);
+    }
+    return WALK_CONTINUE;
+}
+
+//------------------------------------------------------------------------
+// fgNoteNonInlineCandidate: account for inlining failures in calls
+// not marked as inline candidates.
+//
+// Arguments:
+//    tree  - statement containing the call
+//    call  - the call itself
+//
+// Notes:
+//    Used in debug only to try and place descriptions of inline failures
+//    into the proper context in the inline tree.
+
+void Compiler::fgNoteNonInlineCandidate(GenTreePtr   tree,
+                                        GenTreeCall* call)
+{
+    InlineResult inlineResult(this, call, nullptr, "fgNotInlineCandidate");
+    InlineObservation currentObservation = InlineObservation::CALLSITE_NOT_CANDIDATE;
+
+    // Try and recover the reason left behind when the jit decided
+    // this call was not a candidate.
+    InlineObservation priorObservation = call->gtInlineObservation;
+
+    if (InlIsValidObservation(priorObservation))
+    {
+        currentObservation = priorObservation;
+    }
+
+    // Would like to just call noteFatal here, since this
+    // observation blocked candidacy, but policy comes into play
+    // here too.  Also note there's no need to re-report these
+    // failures, since we reported them during the initial
+    // candidate scan.
+    InlineImpact impact = InlGetImpact(currentObservation);
+
+    if (impact == InlineImpact::FATAL)
+    {
+        inlineResult.NoteFatal(currentObservation);
+    }
+    else
+    {
+        inlineResult.Note(currentObservation);
+    }
+
+    inlineResult.SetReported();
+
+    if (call->gtCallType == CT_USER_FUNC)
+    {
+        // Create InlineContext for the failure
+        m_inlineStrategy->NewFailure(tree, &inlineResult);
+    }
+}
+
+#endif
 
 #if defined(_TARGET_ARM_) || defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
 
@@ -21627,7 +21661,7 @@ GenTreePtr Compiler::fgGetStructAsStructPtr(GenTreePtr tree)
     noway_assert((tree->gtOper == GT_LCL_VAR) ||
                  (tree->gtOper == GT_FIELD)   ||
                  (tree->gtOper == GT_IND)     ||
-                 (tree->gtOper == GT_LDOBJ)   ||
+                 (tree->gtOper == GT_OBJ)     ||
                  tree->OperIsSIMD()           ||
                  // tree->gtOper == GT_CALL     || cannot get address of call.
                  // tree->gtOper == GT_MKREFANY || inlining should've been aborted due to mkrefany opcode.
@@ -21636,7 +21670,7 @@ GenTreePtr Compiler::fgGetStructAsStructPtr(GenTreePtr tree)
 
     switch (tree->OperGet())
     {
-    case GT_LDOBJ:
+    case GT_OBJ:
     case GT_IND:
         return tree->gtOp.gtOp1;
 
@@ -21684,6 +21718,13 @@ GenTreePtr Compiler::fgAssignStructInlineeToVar(GenTreePtr child, CORINFO_CLASS_
     {
         // If inlinee was just a call, new inlinee is v05 = call()
         newInlinee = gtNewAssignNode(dst, src);
+
+        // When returning a multi-register value in a local var, make sure the variable is
+        // marked as lvIsMultiRegArgOrRet, so it does not get promoted.
+        if (src->AsCall()->HasMultiRegRetVal())
+        {
+            lvaTable[tmpNum].lvIsMultiRegArgOrRet = true;
+        }
 
         // If inlinee was comma, but a deeper call, new inlinee is (, , , v05 = call())
         if (child->gtOper == GT_COMMA)
@@ -21877,8 +21918,8 @@ Compiler::fgWalkResult      Compiler::fgDebugCheckInlineCandidates(GenTreePtr* p
 #endif // DEBUG
 
 
-void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
-                                             JitInlineResult* inlineResult)
+void       Compiler::fgInvokeInlineeCompiler(GenTreeCall*  call,
+                                             InlineResult* inlineResult)
 {
     noway_assert(call->gtOper == GT_CALL);
     noway_assert((call->gtFlags & GTF_CALL_INLINE_CANDIDATE) != 0);
@@ -21905,10 +21946,9 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
     // Store the link to inlineCandidateInfo into inlineInfo
     inlineInfo.inlineCandidateInfo = inlineCandidateInfo;
 
-    DWORD inlineDepth = 0;
-    BYTE * candidateIL = inlineCandidateInfo->methInfo.ILCode;
-    inlExpPtr expList = inlineInfo.iciStmt->gtStmt.gtInlineExpList;
-    if (fgIsUnboundedInlineRecursion(expList, candidateIL, &inlineDepth))
+    unsigned inlineDepth = fgCheckInlineDepthAndRecursion(&inlineInfo);
+
+    if (inlineResult->IsFailure())
     {
 #ifdef DEBUG
         if (verbose)
@@ -21916,7 +21956,6 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
             printf("Recursive or deep inline recursion detected. Will not expand this INLINECANDIDATE \n");
         }
 #endif // DEBUG
-        inlineResult->setFailure("Recursive or deep inline");
         return;
     }
 
@@ -21935,12 +21974,12 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
     param.fncHandle = fncHandle;
     param.inlineCandidateInfo = inlineCandidateInfo;
     param.inlineInfo = &inlineInfo;
-    setErrorTrap(info.compCompHnd, Param*, pParam, &param)
+    bool success = eeRunWithErrorTrap<Param>([](Param* pParam)
     {
         // Init the local var info of the inlinee
         pParam->pThis->impInlineInitVars(pParam->inlineInfo);
 
-        if (pParam->inlineInfo->inlineResult->isCandidate())
+        if (pParam->inlineInfo->inlineResult->IsCandidate())
         {
             /* Clear the temp table */
             memset(pParam->inlineInfo->lclTmpNum, -1, sizeof(pParam->inlineInfo->lclTmpNum));
@@ -21963,7 +22002,7 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
 
             JITLOG_THIS(pParam->pThis,
                         (LL_INFO100000,
-                         INLINER_INFO "inlineInfo.tokenLookupContextHandle for %s set to 0x%p:\n",
+                         "INLINER: inlineInfo.tokenLookupContextHandle for %s set to 0x%p:\n",
                          pParam->pThis->eeGetMethodFullName(pParam->fncHandle),
                          pParam->pThis->dspPtr(pParam->inlineInfo->tokenLookupContextHandle)));
 
@@ -21991,11 +22030,18 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
 
             if (result != CORJIT_OK)
             {
-                pParam->inlineInfo->inlineResult->setFailure("Error invoking the compiler for the inlinee");
+                // If we haven't yet determined why this inline fails, use
+                // a catch-all something bad happened observation.
+                InlineResult* innerInlineResult = pParam->inlineInfo->inlineResult;
+
+                if (!innerInlineResult->IsFailure())
+                {
+                    innerInlineResult->NoteFatal(InlineObservation::CALLSITE_COMPILATION_FAILURE);
+                }
             }
         }
-    }
-    impErrorTrap()
+    }, &param);
+    if (!success)
     {
 #ifdef DEBUG
         if (verbose)
@@ -22004,15 +22050,17 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
                     eeGetMethodFullName(fncHandle));
         }
 #endif // DEBUG
-        inlineResult->setFailure("Exception invoking the compiler for the inlinee");
-    }
-    endErrorTrap();
 
-    if (inlineResult->isFailure())
+        // If we haven't yet determined why this inline fails, use
+        // a catch-all something bad happened observation.
+        if (!inlineResult->IsFailure())
+        {
+            inlineResult->NoteFatal(InlineObservation::CALLSITE_COMPILATION_ERROR);
+        }
+    }
+
+    if (inlineResult->IsFailure())
     {
-#if defined(DEBUG) || MEASURE_INLINING
-        ++Compiler::jitInlineInitVarsFailureCount;
-#endif // defined(DEBUG) || MEASURE_INLINING
         return;
     }
 
@@ -22038,7 +22086,7 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
                     eeGetMethodFullName(fncHandle));
         }
 #endif // DEBUG
-        inlineResult->setNever("inlinee did not contain a return expression");
+        inlineResult->NoteFatal(InlineObservation::CALLEE_LACKS_RETURN);
         return;
     }
 
@@ -22049,7 +22097,7 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
         if (!(info.compCompHnd->initClass(NULL /* field */, fncHandle /* method */,
                 inlineCandidateInfo->exactContextHnd /* context */) & CORINFO_INITCLASS_INITIALIZED))
         {
-            inlineResult->setNever("Failed class init side-effect");
+            inlineResult->NoteFatal(InlineObservation::CALLEE_CLASS_INIT_FAILURE);
             return;
         }
     }
@@ -22063,16 +22111,14 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
     fgInsertInlineeBlocks(&inlineInfo);
 
 #ifdef DEBUG
-    ++fgInlinedCount;
 
     if (verbose || fgPrintInlinedMethods)
     {
-        printf("Successfully inlined %s (%d IL bytes) (depth %d) into %s [%s]\n",
+        printf("Successfully inlined %s (%d IL bytes) (depth %d) [%s]\n",
                eeGetMethodFullName(fncHandle),
                inlineCandidateInfo->methInfo.ILCodeSize,
                inlineDepth,
-               info.compFullName,
-               inlineResult->reason());
+               inlineResult->ReasonString());
     }
 
     if (verbose)
@@ -22086,7 +22132,7 @@ void       Compiler::fgInvokeInlineeCompiler(GenTreeCall* call,
 #endif
 
     // We inlined...
-    inlineResult->setSuccess();
+    inlineResult->NoteSuccess();
 }
 
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -22119,39 +22165,10 @@ void Compiler::fgInsertInlineeBlocks(InlineInfo* pInlineInfo)
 
 #endif // DEBUG
 
-#if defined(DEBUG) || MEASURE_INLINING
-
-    if (iciStmt->gtNext == NULL)
-    {
-        ++Compiler::jitIciStmtIsTheLastInBB;
-    }
-
-    if (InlineeCompiler->fgBBcount == 1)
-    {
-        ++Compiler::jitInlineeContainsOnlyOneBB;
-    }
-
-#endif // defined(DEBUG) || MEASURE_INLINING
-
     //
-    // Obtain an inlExpLst struct and update the gtInlineExpList field in the inlinee's statements
+    // Create a new inline context and mark the inlined statements with it
     //
-    inlExpLst* expDsc = new (this, CMK_Inlining) inlExpLst;
-    inlExpLst *parentLst = iciStmt->gtStmt.gtInlineExpList;
-    noway_assert(parentLst != nullptr);
-    BYTE *parentIL = pInlineInfo->inlineCandidateInfo->methInfo.ILCode;
-    expDsc->ixlCode = parentIL;
-    expDsc->ixlParent = parentLst;
-    // Push on front here will put siblings in reverse lexical
-    // order which we undo in the dumper
-    expDsc->ixlSibling = parentLst->ixlChild;
-    parentLst->ixlChild = expDsc;
-    expDsc->ixlChild = nullptr;
-    expDsc->ilOffset = iciStmt->AsStmt()->gtStmtILoffsx;
-#ifdef DEBUG
-    expDsc->methodName = eeGetMethodFullName(pInlineInfo->fncHandle);
-    expDsc->depth = parentLst->depth + 1;
-#endif
+    InlineContext* calleeContext = m_inlineStrategy->NewSuccess(pInlineInfo);
 
     for (block = InlineeCompiler->fgFirstBB;
          block != nullptr;
@@ -22161,7 +22178,7 @@ void Compiler::fgInsertInlineeBlocks(InlineInfo* pInlineInfo)
              stmt;
              stmt = stmt->gtNextStmt)
         {
-            stmt->gtInlineExpList = expDsc;
+            stmt->gtInlineContext = calleeContext;
         }
     }
 
@@ -22538,29 +22555,19 @@ GenTreePtr      Compiler::fgInlinePrependStatements(InlineInfo* inlineInfo)
                 {
                     /* Create the temp assignment for this argument */
 
-                    CORINFO_CLASS_HANDLE structType = DUMMY_INIT(0);
+                    CORINFO_CLASS_HANDLE structHnd = DUMMY_INIT(0);
 
                     if (varTypeIsStruct(lclVarInfo[argNum].lclTypeInfo))
                     {
-                        if (inlArgInfo[argNum].argNode->gtOper == GT_LDOBJ)
-                        {
-                            structType = inlArgInfo[argNum].argNode->gtLdObj.gtClass;
-                        }
-                        else if (inlArgInfo[argNum].argNode->gtOper == GT_MKREFANY)
-                        {
-                            structType = lclVarInfo[argNum].lclVerTypeInfo.GetClassHandle();
-                        }
-                        else
-                        {
-                            noway_assert(!"Unknown struct type");
-                        }
+                        structHnd = gtGetStructHandleIfPresent(inlArgInfo[argNum].argNode);
+                        noway_assert(structHnd != NO_CLASS_HANDLE);
                     }
 
                     // Unsafe value cls check is not needed for argTmpNum here since in-linee compiler instance would have
                     // iterated over these and marked them accordingly.
                     impAssignTempGen(inlArgInfo[argNum].argTmpNum,
                                      inlArgInfo[argNum].argNode,
-                                     structType,
+                                     structHnd,
                                      (unsigned)CHECK_SPILL_NONE,
                                      & afterStmt,
                                      callILOffset,
@@ -22603,10 +22610,10 @@ GenTreePtr      Compiler::fgInlinePrependStatements(InlineInfo* inlineInfo)
                 {
                     noway_assert(inlArgInfo[argNum].argIsUsed == false);
 
-                    if (inlArgInfo[argNum].argNode->gtOper == GT_LDOBJ ||
+                    if (inlArgInfo[argNum].argNode->gtOper == GT_OBJ ||
                         inlArgInfo[argNum].argNode->gtOper == GT_MKREFANY)
                     {
-                        // Don't put GT_LDOBJ node under a GT_COMMA.
+                        // Don't put GT_OBJ node under a GT_COMMA.
                         // Codegen can't deal with it.
                         // Just hang the address here in case there are side-effect.
                         newStmt = gtNewStmt(gtUnusedValNode(inlArgInfo[argNum].argNode->gtOp.gtOp1), callILOffset);
@@ -22807,6 +22814,6 @@ void Compiler::fgLclFldAssign(unsigned lclNum)
     assert(varTypeIsStruct(lvaTable[lclNum].lvType));
     if (lvaTable[lclNum].lvPromoted && lvaTable[lclNum].lvFieldCnt > 1)
     {
-        lvaSetVarDoNotEnregister(lclNum DEBUG_ARG(DNER_LocalField));
+        lvaSetVarDoNotEnregister(lclNum DEBUGARG(DNER_LocalField));
     }
 }

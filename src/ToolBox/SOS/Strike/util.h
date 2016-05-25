@@ -692,7 +692,7 @@ namespace Output
             {
                 if (mFormat == Formats::Default || mFormat == Formats::Pointer)
                 {
-                    ExtOut("%p", (__int64)mValue);
+                    ExtOut("%p", SOS_PTR(mValue));
                 }
                 else
                 {
@@ -745,7 +745,7 @@ namespace Output
                     if (precision > width)
                         precision = width;
 
-                    ExtOut(leftAlign ? "%-*.*p" : "%*.*p", width, precision, (__int64)mValue);
+                    ExtOut(leftAlign ? "%-*.*p" : "%*.*p", width, precision, SOS_PTR(mValue));
                 }
                 else
                 {
@@ -1032,6 +1032,7 @@ DefineFormatClass(ThreadID, Formats::Hex, Output::DML_ThreadID);
 DefineFormatClass(RCWrapper, Formats::Pointer, Output::DML_RCWrapper);
 DefineFormatClass(CCWrapper, Formats::Pointer, Output::DML_CCWrapper);
 DefineFormatClass(InstructionPtr, Formats::Pointer, Output::DML_IP);
+DefineFormatClass(NativePtr, Formats::Pointer, Output::DML_None);
 
 DefineFormatClass(Decimal, Formats::Decimal, Output::DML_None);
 DefineFormatClass(Pointer, Formats::Pointer, Output::DML_None);
@@ -1631,19 +1632,6 @@ WCHAR *CreateMethodTableName(TADDR mt, TADDR cmt = NULL);
 
 void isRetAddr(DWORD_PTR retAddr, DWORD_PTR* whereCalled);
 DWORD_PTR GetValueFromExpression (___in __in_z const char *const str);
-
-#ifndef FEATURE_PAL
-// ensure we always allocate on the process heap
-FORCEINLINE void* __cdecl operator new(size_t size) throw()
-{ return HeapAlloc(GetProcessHeap(), 0, size); }
-FORCEINLINE void __cdecl operator delete(void* pObj) throw()
-{ HeapFree(GetProcessHeap(), 0, pObj); }
-
-FORCEINLINE void* __cdecl operator new[](size_t size) throw()
-{ return HeapAlloc(GetProcessHeap(), 0, size); }
-FORCEINLINE void __cdecl operator delete[](void* pObj) throw()
-{ HeapFree(GetProcessHeap(), 0, pObj); }
-#endif
 
 enum ModuleHeapType
 {
@@ -2399,14 +2387,12 @@ public:
     HRESULT SymbolReader::ResolveSequencePoint(__in_z WCHAR* pFilename, ULONG32 lineNumber, mdMethodDef* pToken, ULONG32* pIlOffset);
 };
 
-#ifndef FEATURE_PAL
 HRESULT
 GetLineByOffset(
         ___in ULONG64 IP,
         ___out ULONG *pLinenum,
         __out_ecount(cbFileName) LPSTR lpszFileName,
         ___in ULONG cbFileName);
-#endif // FEATURE_PAL
 
 /// X86 Context
 #define X86_SIZE_OF_80387_REGISTERS      80
@@ -2703,9 +2689,9 @@ typedef struct _CROSS_PLATFORM_CONTEXT {
 
 
 WString BuildRegisterOutput(const SOSStackRefData &ref, bool printObj = true);
-WString MethodNameFromIP(CLRDATA_ADDRESS methodDesc, BOOL bSuppressLines=FALSE);
+WString MethodNameFromIP(CLRDATA_ADDRESS methodDesc, BOOL bSuppressLines = FALSE, BOOL bAssemblyName = FALSE, BOOL bDisplacement = FALSE);
 HRESULT GetGCRefs(ULONG osID, SOSStackRefData **ppRefs, unsigned int *pRefCnt, SOSStackRefError **ppErrors, unsigned int *pErrCount);
-WString GetFrameFromAddress(TADDR frameAddr, IXCLRDataStackWalk *pStackwalk=0);
+WString GetFrameFromAddress(TADDR frameAddr, IXCLRDataStackWalk *pStackwalk = NULL, BOOL bAssemblyName = FALSE);
 
 /* This cache is used to read data from the target process if the reads are known
  * to be sequential.

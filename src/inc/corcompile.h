@@ -351,7 +351,6 @@ struct CORCOMPILE_VIRTUAL_SECTION_INFO
     CORCOMPILE_SECTION_TYPE(CompressedMaps)                   \
     CORCOMPILE_SECTION_TYPE(Debug)                            \
     CORCOMPILE_SECTION_TYPE(BaseRelocs)                       \
-    CORCOMPILE_SECTION_TYPE(MDILData)                         \
 
 // Hot: Items are frequently accessed ( Indicated by either IBC data, or
 //      statically known )
@@ -684,11 +683,15 @@ enum CORCOMPILE_GCREFMAP_TOKENS
 // Tags for fixup blobs
 enum CORCOMPILE_FIXUP_BLOB_KIND
 {
-    ENCODE_NONE                 = 0,
+    ENCODE_NONE                         = 0,
     
-    ENCODE_MODULE_OVERRIDE      = 0x80,             /* When the high bit is set, override of the module immediately follows */
+    ENCODE_MODULE_OVERRIDE              = 0x80,     /* When the high bit is set, override of the module immediately follows */
 
-    ENCODE_TYPE_HANDLE          = 0x10,             /* Type handle */
+    ENCODE_DICTIONARY_LOOKUP_THISOBJ    = 0x07,
+    ENCODE_DICTIONARY_LOOKUP_TYPE       = 0x08,
+    ENCODE_DICTIONARY_LOOKUP_METHOD     = 0x09,
+
+    ENCODE_TYPE_HANDLE                  = 0x10,     /* Type handle */
     ENCODE_METHOD_HANDLE,                           /* Method handle */
     ENCODE_FIELD_HANDLE,                            /* Field handle */
 
@@ -728,9 +731,9 @@ enum CORCOMPILE_FIXUP_BLOB_KIND
     ENCODE_CHECK_FIELD_OFFSET,
 
     ENCODE_DELEGATE_CTOR,
-    ENCODE_METHOD_NATIVE_ENTRY,                     /* NativeCallable method token */
 
-    ENCODE_MODULE_HANDLE      = 0x50,               /* Module token */
+
+    ENCODE_MODULE_HANDLE                = 0x50,     /* Module token */
     ENCODE_STATIC_FIELD_ADDRESS,                    /* For accessing a static field */
     ENCODE_MODULE_ID_FOR_STATICS,                   /* For accessing static fields */
     ENCODE_MODULE_ID_FOR_GENERIC_STATICS,           /* For accessing static fields */
@@ -742,6 +745,7 @@ enum CORCOMPILE_FIXUP_BLOB_KIND
     ENCODE_VARARGS_METHODREF,
     ENCODE_VARARGS_SIG,
     ENCODE_ACTIVE_DEPENDENCY,                       /* Conditional active dependency */
+    ENCODE_METHOD_NATIVE_ENTRY,                     /* NativeCallable method token */
 };
 
 enum EncodeMethodSigFlags
@@ -838,6 +842,7 @@ typedef enum
 {
 #ifdef FEATURE_CORECLR
     CORECLR_INFO,
+    CROSSGEN_COMPILER_INFO,
 #else
     CLR_INFO,
     NGEN_COMPILER_INFO,
@@ -933,10 +938,13 @@ struct CORCOMPILE_DEPENDENCY
 
 /*********************************************************************************/
 // Flags used to encode HelperTable
-
+#if defined(_TARGET_ARM64_)
+#define HELPER_TABLE_ENTRY_LEN      16
+#else
 #define HELPER_TABLE_ENTRY_LEN      8
-#define HELPER_TABLE_ALIGN          8
+#endif //defined(_TARGET_ARM64_)
 
+#define HELPER_TABLE_ALIGN          8
 #define CORCOMPILE_HELPER_PTR       0x80000000 // The entry is pointer to the helper (jump thunk otherwise)
 
 // The layout of this struct is required to be
@@ -1240,10 +1248,6 @@ class ICorCompilePreloader
 
     virtual BOOL IsUncompiledMethod(CORINFO_METHOD_HANDLE handle) = 0;
 
-#ifdef MDIL
-    virtual void AddMDILCodeFlavorsToUncompiledMethods(CORINFO_METHOD_HANDLE handle) = 0;
-#endif
-
     // Return a method handle that was previously registered and
     // hasn't been compiled already, and remove it from the set
     // of uncompiled methods.
@@ -1468,16 +1472,6 @@ typedef void (__stdcall *DEFINETOKEN_CALLBACK)(LPVOID pModuleContext, CORINFO_MO
 
 typedef HRESULT (__stdcall *CROSS_DOMAIN_CALLBACK)(LPVOID pArgs);
 
-#ifdef MDIL
-enum MDILCompilationFlags
-{
-    MDILCompilationFlags_None = 0,
-    MDILCompilationFlags_CreateMDIL = 1,
-    MDILCompilationFlags_MinimalMDIL = 2,
-    MDILCompilationFlags_NoMDIL = 4,
-};
-#endif // MDIL
-
 class ICorCompileInfo
 {
   public:
@@ -1515,9 +1509,6 @@ class ICorCompileInfo
             BOOL fForceProfiling,
             BOOL fForceInstrument,
             BOOL fForceFulltrustDomain
-#ifdef MDIL
-          , MDILCompilationFlags mdilCompilationFlags
-#endif
             ) = 0;
 
     // calls pfnCallback in the specified domain
@@ -1591,7 +1582,6 @@ class ICorCompileInfo
             CORINFO_MODULE_HANDLE   *pHandle
             ) = 0;
 
-#ifndef BINDER
 #ifndef FEATURE_CORECLR
     // Check if the assembly supports automatic NGen
     virtual BOOL SupportsAutoNGen(
@@ -1605,7 +1595,6 @@ class ICorCompileInfo
         COUNT_T nModules
         ) = 0;
 #endif
-#endif
 
     // Checks to see if an up to date zap exists for the
     // assembly
@@ -1615,27 +1604,6 @@ class ICorCompileInfo
         LPWSTR                  assemblyManifestModulePath,
         LPDWORD                 cAssemblyManifestModulePath
         ) = 0;
-
-#ifdef MDIL
-    // Get details of trust assigned to image
-    virtual DWORD GetMdilModuleSecurityFlags(
-        CORINFO_ASSEMBLY_HANDLE assembly
-        ) = 0;
-
-    // Check to see if the no string interning optimization is permitted.
-    virtual BOOL CompilerRelaxationNoStringInterningPermitted(
-        CORINFO_ASSEMBLY_HANDLE assembly
-        ) = 0;
-
-    // Check to see if the non Exception derived exceptions should be wrapped.
-    virtual BOOL RuntimeCompatibilityWrapExceptions(
-        CORINFO_ASSEMBLY_HANDLE assembly
-        ) = 0;
-
-    virtual DWORD CERReliabilityContract(
-        CORINFO_ASSEMBLY_HANDLE assembly
-        ) = 0;
-#endif // MDIL
 
     // Sets up the compilation target in the EE
     virtual HRESULT SetCompilationTarget(
@@ -1665,9 +1633,7 @@ class ICorCompileInfo
             CORINFO_ASSEMBLY_HANDLE hAssembly,
             CORINFO_ASSEMBLY_HANDLE hAssemblyDependency,
             LoadHintEnum *loadHint,
-			// TritonTODO: should this be inside ifdef?
-            LoadHintEnum *defaultLoadHint = NULL // for MDIL we want to separate the default load hint on the assembly
-                                                 // from the load hint on the dependency
+            LoadHintEnum *defaultLoadHint = NULL
             ) = 0;
 
     // Returns information on how the assembly has been loaded
@@ -1798,7 +1764,8 @@ class ICorCompileInfo
             LPVOID encodeContext,
             ENCODEMODULE_CALLBACK pfnEncodeModule,
             CORINFO_RESOLVED_TOKEN * pResolvedToken = NULL,
-            CORINFO_RESOLVED_TOKEN * pConstrainedResolvedToken = NULL) = 0;
+            CORINFO_RESOLVED_TOKEN * pConstrainedResolvedToken = NULL,
+            BOOL fEncodeUsingResolvedTokenSpecStreams = FALSE) = 0;
 
     // Returns non-null methoddef or memberref token if it is sufficient to encode the method (no generic instantiations, etc.)
     virtual mdToken TryEncodeMethodAsToken(
@@ -1842,13 +1809,6 @@ class ICorCompileInfo
             ICorCompileDataStore    *pData,
             CorProfileData          *profileData
             ) = 0;
-
-#ifdef MDIL
-    // Returns whether or not a method should be compiled. S_OK for yes, S_FALSE for no.
-    virtual HRESULT ShouldCompile(
-            CORINFO_METHOD_HANDLE   methodHandle
-            ) = 0;
-#endif // MDIL
 
     // Gets the codebase URL for the assembly
     virtual void GetAssemblyCodeBase(
@@ -1900,16 +1860,6 @@ class ICorCompileInfo
     // true if the method has [NativeCallableAttribute]
     virtual BOOL IsNativeCallableMethod(CORINFO_METHOD_HANDLE handle) = 0;
 
-#ifdef CLR_STANDALONE_BINDER
-    virtual HRESULT GetMetadataRvaInfo(
-            OUT DWORD   *pFirstMethodRvaOffset,
-            OUT DWORD   *pMethodDefRecordSize,
-            OUT DWORD   *pMethodDefCount,
-            OUT DWORD   *pFirstFieldRvaOffset,
-            OUT DWORD   *pFieldRvaRecordSize,
-            OUT DWORD   *pFieldRvaCount) = 0;
-#endif
-
     virtual BOOL GetIsGeneratingNgenPDB() = 0;
     virtual void SetIsGeneratingNgenPDB(BOOL fGeneratingNgenPDB) = 0;
 
@@ -1923,6 +1873,10 @@ class ICorCompileInfo
     virtual void EncodeTypeLayout(CORINFO_CLASS_HANDLE classHandle, SigBuilder * pSigBuilder) = 0;
 
     virtual BOOL AreAllClassesFullyLoaded(CORINFO_MODULE_HANDLE moduleHandle) = 0;
+
+    virtual int GetVersionResilientTypeHashCode(CORINFO_MODULE_HANDLE moduleHandle, mdToken token) = 0;
+
+    virtual int GetVersionResilientMethodHashCode(CORINFO_METHOD_HANDLE methodHandle) = 0;
 #endif
 
     virtual BOOL HasCustomAttribute(CORINFO_METHOD_HANDLE method, LPCSTR customAttributeName) = 0;
@@ -1960,10 +1914,6 @@ extern "C" unsigned __stdcall PartialNGenStressPercentage();
 
 // create a PDB dumping all functions in hAssembly into pdbPath
 extern "C" HRESULT __stdcall CreatePdb(CORINFO_ASSEMBLY_HANDLE hAssembly, BSTR pNativeImagePath, BSTR pPdbPath, BOOL pdbLines, BSTR pManagedPdbSearchPath);
-
-#ifdef MDIL
-extern bool g_fIsNGenEmbedILProcess;
-#endif // MDIL
 
 #if defined(FEATURE_CORECLR) || defined(CROSSGEN_COMPILE)
 extern bool g_fNGenMissingDependenciesOk;

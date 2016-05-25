@@ -277,39 +277,43 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
     T_CONTEXT context;
     T_KNONVOLATILE_CONTEXT_POINTERS nonVolContextPtrs;
 
-    context.X19 = unwoundstate->captureX19_X28[0] = baseState->captureX19_X28[0];
-    context.X20 = unwoundstate->captureX19_X28[1] = baseState->captureX19_X28[1];
-    context.X21 = unwoundstate->captureX19_X28[2] = baseState->captureX19_X28[2];
-    context.X22 = unwoundstate->captureX19_X28[3] = baseState->captureX19_X28[3];
-    context.X23 = unwoundstate->captureX19_X28[4] = baseState->captureX19_X28[4];
-    context.X24 = unwoundstate->captureX19_X28[5] = baseState->captureX19_X28[5];
-    context.X25 = unwoundstate->captureX19_X28[6] = baseState->captureX19_X28[6];
-    context.X26 = unwoundstate->captureX19_X28[7] = baseState->captureX19_X28[7];
-    context.X27 = unwoundstate->captureX19_X28[8] = baseState->captureX19_X28[8];
-    context.X28 = unwoundstate->captureX19_X28[9] = baseState->captureX19_X28[9];
+    context.X19 = unwoundstate->captureX19_X29[0] = baseState->captureX19_X29[0];
+    context.X20 = unwoundstate->captureX19_X29[1] = baseState->captureX19_X29[1];
+    context.X21 = unwoundstate->captureX19_X29[2] = baseState->captureX19_X29[2];
+    context.X22 = unwoundstate->captureX19_X29[3] = baseState->captureX19_X29[3];
+    context.X23 = unwoundstate->captureX19_X29[4] = baseState->captureX19_X29[4];
+    context.X24 = unwoundstate->captureX19_X29[5] = baseState->captureX19_X29[5];
+    context.X25 = unwoundstate->captureX19_X29[6] = baseState->captureX19_X29[6];
+    context.X26 = unwoundstate->captureX19_X29[7] = baseState->captureX19_X29[7];
+    context.X27 = unwoundstate->captureX19_X29[8] = baseState->captureX19_X29[8];
+    context.X28 = unwoundstate->captureX19_X29[9] = baseState->captureX19_X29[9];
+    context.Fp  = unwoundstate->captureX19_X29[10] = baseState->captureX19_X29[10];	
+    context.Lr = unwoundstate->captureX19_X29[11] = baseState->captureX19_X29[11];
 
     context.Sp = baseState->captureSp;
     context.Pc = baseState->captureIp;
-    context.Fp = baseState->captureFp;
 
 #if !defined(DACCESS_COMPILE)
     // For DAC, if we get here, it means that the LazyMachState is uninitialized and we have to unwind it.
     // The API we use to unwind in DAC is StackWalk64(), which does not support the context pointers.
     //
     // Restore the integer registers to KNONVOLATILE_CONTEXT_POINTERS to be used for unwinding.
-    nonVolContextPtrs.X19 = &unwoundstate->captureX19_X28[0];
-    nonVolContextPtrs.X20 = &unwoundstate->captureX19_X28[1];
-    nonVolContextPtrs.X21 = &unwoundstate->captureX19_X28[2];
-    nonVolContextPtrs.X22 = &unwoundstate->captureX19_X28[3];
-    nonVolContextPtrs.X23 = &unwoundstate->captureX19_X28[4];
-    nonVolContextPtrs.X24 = &unwoundstate->captureX19_X28[5];
-    nonVolContextPtrs.X25 = &unwoundstate->captureX19_X28[6];
-    nonVolContextPtrs.X26 = &unwoundstate->captureX19_X28[7];
-    nonVolContextPtrs.X27 = &unwoundstate->captureX19_X28[8];
-    nonVolContextPtrs.X28 = &unwoundstate->captureX19_X28[9];
+    nonVolContextPtrs.X19 = &unwoundstate->captureX19_X29[0];
+    nonVolContextPtrs.X20 = &unwoundstate->captureX19_X29[1];
+    nonVolContextPtrs.X21 = &unwoundstate->captureX19_X29[2];
+    nonVolContextPtrs.X22 = &unwoundstate->captureX19_X29[3];
+    nonVolContextPtrs.X23 = &unwoundstate->captureX19_X29[4];
+    nonVolContextPtrs.X24 = &unwoundstate->captureX19_X29[5];
+    nonVolContextPtrs.X25 = &unwoundstate->captureX19_X29[6];
+    nonVolContextPtrs.X26 = &unwoundstate->captureX19_X29[7];
+    nonVolContextPtrs.X27 = &unwoundstate->captureX19_X29[8];
+    nonVolContextPtrs.X28 = &unwoundstate->captureX19_X29[9];
+    nonVolContextPtrs.Fp  = &unwoundstate->captureX19_X29[10];	
+    nonVolContextPtrs.Lr = &unwoundstate->captureX19_X29[11];
+
 #endif // DACCESS_COMPILE
 
-    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    LazyMachState::unwindLazyState(ip:%p,sp:%p,fp:%p)\n", baseState->captureIp, baseState->captureSp, baseState->captureFp));
+    LOG((LF_GCROOTS, LL_INFO100000, "STACKWALK    LazyMachState::unwindLazyState(ip:%p,sp:%p)\n", baseState->captureIp, baseState->captureSp));
 
     PCODE pvControlPc;
 
@@ -355,33 +359,36 @@ void LazyMachState::unwindLazyState(LazyMachState* baseState,
 
 #ifdef DACCESS_COMPILE
     // For DAC builds, we update the registers directly since we dont have context pointers
-    unwoundstate->captureX19_X28[0] = context.X19;
-    unwoundstate->captureX19_X28[1] = context.X20;
-    unwoundstate->captureX19_X28[2] = context.X21;
-    unwoundstate->captureX19_X28[3] = context.X22;
-    unwoundstate->captureX19_X28[4] = context.X23;
-    unwoundstate->captureX19_X28[5] = context.X24;
-    unwoundstate->captureX19_X28[6] = context.X25;
-    unwoundstate->captureX19_X28[7] = context.X26;
-    unwoundstate->captureX19_X28[8] = context.X27;
-    unwoundstate->captureX19_X28[9] = context.X28;
+    unwoundstate->captureX19_X29[0] = context.X19;
+    unwoundstate->captureX19_X29[1] = context.X20;
+    unwoundstate->captureX19_X29[2] = context.X21;
+    unwoundstate->captureX19_X29[3] = context.X22;
+    unwoundstate->captureX19_X29[4] = context.X23;
+    unwoundstate->captureX19_X29[5] = context.X24;
+    unwoundstate->captureX19_X29[6] = context.X25;
+    unwoundstate->captureX19_X29[7] = context.X26;
+    unwoundstate->captureX19_X29[8] = context.X27;
+    unwoundstate->captureX19_X29[9] = context.X28;
+    unwoundstate->captureX19_X29[10] = context.Fp;
+    unwoundstate->captureX19_X29[11] = context.Lr;
 #else // !DACCESS_COMPILE
     // For non-DAC builds, update the register state from context pointers
-    unwoundstate->ptrX19_X28[0] = nonVolContextPtrs.X19;
-    unwoundstate->ptrX19_X28[1] = nonVolContextPtrs.X20;
-    unwoundstate->ptrX19_X28[2] = nonVolContextPtrs.X21;
-    unwoundstate->ptrX19_X28[3] = nonVolContextPtrs.X22;
-    unwoundstate->ptrX19_X28[4] = nonVolContextPtrs.X23;
-    unwoundstate->ptrX19_X28[5] = nonVolContextPtrs.X24;
-    unwoundstate->ptrX19_X28[6] = nonVolContextPtrs.X25;
-    unwoundstate->ptrX19_X28[7] = nonVolContextPtrs.X26;
-    unwoundstate->ptrX19_X28[8] = nonVolContextPtrs.X27;
-    unwoundstate->ptrX19_X28[9] = nonVolContextPtrs.X28;
+    unwoundstate->ptrX19_X29[0] = nonVolContextPtrs.X19;
+    unwoundstate->ptrX19_X29[1] = nonVolContextPtrs.X20;
+    unwoundstate->ptrX19_X29[2] = nonVolContextPtrs.X21;
+    unwoundstate->ptrX19_X29[3] = nonVolContextPtrs.X22;
+    unwoundstate->ptrX19_X29[4] = nonVolContextPtrs.X23;
+    unwoundstate->ptrX19_X29[5] = nonVolContextPtrs.X24;
+    unwoundstate->ptrX19_X29[6] = nonVolContextPtrs.X25;
+    unwoundstate->ptrX19_X29[7] = nonVolContextPtrs.X26;
+    unwoundstate->ptrX19_X29[8] = nonVolContextPtrs.X27;
+    unwoundstate->ptrX19_X29[9] = nonVolContextPtrs.X28;
+    unwoundstate->ptrX19_X29[10] = nonVolContextPtrs.Fp;	
+    unwoundstate->ptrX19_X29[11] = nonVolContextPtrs.Lr;
 #endif // DACCESS_COMPILE
 
     unwoundstate->_pc = context.Pc;
     unwoundstate->_sp = context.Sp;
-    unwoundstate->_fp = context.Fp;
 
     unwoundstate->_isValid = TRUE;
 }
@@ -418,19 +425,19 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
 
         pRD->pCurrentContext->Pc = pRD->ControlPC = pUnwoundState->_pc;
         pRD->pCurrentContext->Sp = pRD->SP        = pUnwoundState->_sp;
-        pRD->pCurrentContext->Fp = pUnwoundState->_fp;
 
-        pRD->pCurrentContext->X19 = (DWORD64)(pUnwoundState->captureX19_X28[0]);
-        pRD->pCurrentContext->X20 = (DWORD64)(pUnwoundState->captureX19_X28[1]);
-        pRD->pCurrentContext->X21 = (DWORD64)(pUnwoundState->captureX19_X28[2]);
-        pRD->pCurrentContext->X22 = (DWORD64)(pUnwoundState->captureX19_X28[3]);
-        pRD->pCurrentContext->X23 = (DWORD64)(pUnwoundState->captureX19_X28[4]);
-        pRD->pCurrentContext->X24 = (DWORD64)(pUnwoundState->captureX19_X28[5]);
-        pRD->pCurrentContext->X25 = (DWORD64)(pUnwoundState->captureX19_X28[6]);
-        pRD->pCurrentContext->X26 = (DWORD64)(pUnwoundState->captureX19_X28[7]);
-        pRD->pCurrentContext->X27 = (DWORD64)(pUnwoundState->captureX19_X28[8]);
-        pRD->pCurrentContext->X28 = (DWORD64)(pUnwoundState->captureX19_X28[9]);
-
+        pRD->pCurrentContext->X19 = (DWORD64)(pUnwoundState->captureX19_X29[0]);
+        pRD->pCurrentContext->X20 = (DWORD64)(pUnwoundState->captureX19_X29[1]);
+        pRD->pCurrentContext->X21 = (DWORD64)(pUnwoundState->captureX19_X29[2]);
+        pRD->pCurrentContext->X22 = (DWORD64)(pUnwoundState->captureX19_X29[3]);
+        pRD->pCurrentContext->X23 = (DWORD64)(pUnwoundState->captureX19_X29[4]);
+        pRD->pCurrentContext->X24 = (DWORD64)(pUnwoundState->captureX19_X29[5]);
+        pRD->pCurrentContext->X25 = (DWORD64)(pUnwoundState->captureX19_X29[6]);
+        pRD->pCurrentContext->X26 = (DWORD64)(pUnwoundState->captureX19_X29[7]);
+        pRD->pCurrentContext->X27 = (DWORD64)(pUnwoundState->captureX19_X29[8]);
+        pRD->pCurrentContext->X28 = (DWORD64)(pUnwoundState->captureX19_X29[9]);
+        pRD->pCurrentContext->Fp = (DWORD64)(pUnwoundState->captureX19_X29[10]);
+        pRD->pCurrentContext->Lr = (DWORD64)(pUnwoundState->captureX19_X29[11]);
         return;
     }
 #endif // DACCESS_COMPILE
@@ -442,31 +449,33 @@ void HelperMethodFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     
     pRD->pCurrentContext->Pc = pRD->ControlPC;
     pRD->pCurrentContext->Sp = pRD->SP;
-    pRD->pCurrentContext->Fp = (DWORD64)(size_t)m_MachState._fp;
 
-    pRD->pCurrentContext->X19 = *m_MachState.ptrX19_X28[0];
-    pRD->pCurrentContext->X20 = *m_MachState.ptrX19_X28[1];
-    pRD->pCurrentContext->X21 = *m_MachState.ptrX19_X28[2];
-    pRD->pCurrentContext->X22 = *m_MachState.ptrX19_X28[3];
-    pRD->pCurrentContext->X23 = *m_MachState.ptrX19_X28[4];
-    pRD->pCurrentContext->X24 = *m_MachState.ptrX19_X28[5];
-    pRD->pCurrentContext->X25 = *m_MachState.ptrX19_X28[6];
-    pRD->pCurrentContext->X26 = *m_MachState.ptrX19_X28[7];
-    pRD->pCurrentContext->X27 = *m_MachState.ptrX19_X28[8];
-    pRD->pCurrentContext->X28 = *m_MachState.ptrX19_X28[9];
+    pRD->pCurrentContext->X19 = *m_MachState.ptrX19_X29[0];
+    pRD->pCurrentContext->X20 = *m_MachState.ptrX19_X29[1];
+    pRD->pCurrentContext->X21 = *m_MachState.ptrX19_X29[2];
+    pRD->pCurrentContext->X22 = *m_MachState.ptrX19_X29[3];
+    pRD->pCurrentContext->X23 = *m_MachState.ptrX19_X29[4];
+    pRD->pCurrentContext->X24 = *m_MachState.ptrX19_X29[5];
+    pRD->pCurrentContext->X25 = *m_MachState.ptrX19_X29[6];
+    pRD->pCurrentContext->X26 = *m_MachState.ptrX19_X29[7];
+    pRD->pCurrentContext->X27 = *m_MachState.ptrX19_X29[8];
+    pRD->pCurrentContext->X28 = *m_MachState.ptrX19_X29[9];
+    pRD->pCurrentContext->Fp  = *m_MachState.ptrX19_X29[10];
+    pRD->pCurrentContext->Lr = *m_MachState.ptrX19_X29[11];
 
 #if !defined(DACCESS_COMPILE)    
-    pRD->pCurrentContextPointers->X19 = m_MachState.ptrX19_X28[0];
-    pRD->pCurrentContextPointers->X20 = m_MachState.ptrX19_X28[1];
-    pRD->pCurrentContextPointers->X21 = m_MachState.ptrX19_X28[2];
-    pRD->pCurrentContextPointers->X22 = m_MachState.ptrX19_X28[3];
-    pRD->pCurrentContextPointers->X23 = m_MachState.ptrX19_X28[4];
-    pRD->pCurrentContextPointers->X24 = m_MachState.ptrX19_X28[5];
-    pRD->pCurrentContextPointers->X25 = m_MachState.ptrX19_X28[6];
-    pRD->pCurrentContextPointers->X26 = m_MachState.ptrX19_X28[7];
-    pRD->pCurrentContextPointers->X27 = m_MachState.ptrX19_X28[8];
-    pRD->pCurrentContextPointers->X28 = m_MachState.ptrX19_X28[9];
-    pRD->pCurrentContextPointers->Lr = NULL;
+    pRD->pCurrentContextPointers->X19 = m_MachState.ptrX19_X29[0];
+    pRD->pCurrentContextPointers->X20 = m_MachState.ptrX19_X29[1];
+    pRD->pCurrentContextPointers->X21 = m_MachState.ptrX19_X29[2];
+    pRD->pCurrentContextPointers->X22 = m_MachState.ptrX19_X29[3];
+    pRD->pCurrentContextPointers->X23 = m_MachState.ptrX19_X29[4];
+    pRD->pCurrentContextPointers->X24 = m_MachState.ptrX19_X29[5];
+    pRD->pCurrentContextPointers->X25 = m_MachState.ptrX19_X29[6];
+    pRD->pCurrentContextPointers->X26 = m_MachState.ptrX19_X29[7];
+    pRD->pCurrentContextPointers->X27 = m_MachState.ptrX19_X29[8];
+    pRD->pCurrentContextPointers->X28 = m_MachState.ptrX19_X29[9];
+    pRD->pCurrentContextPointers->Fp = m_MachState.ptrX19_X29[10];
+    pRD->pCurrentContextPointers->Lr = m_MachState.ptrX19_X29[11];
 #endif
 }
 #endif // CROSSGEN_COMPILE
@@ -569,9 +578,27 @@ void FixupPrecode::Fixup(DataImage *image, MethodDesc * pMD)
 }
 #endif // FEATURE_NATIVE_IMAGE_GENERATION
 
+
 void ThisPtrRetBufPrecode::Init(MethodDesc* pMD, LoaderAllocator *pLoaderAllocator)
 {
-    _ASSERTE(!"ARM64:NYI");
+    WRAPPER_NO_CONTRACT;
+
+    int n = 0;
+    //Initially
+    //x0 -This ptr
+    //x1 -ReturnBuffer
+    m_rgCode[n++] = 0x91000010; // mov x16, x0
+    m_rgCode[n++] = 0x91000020; // mov x0, x1
+    m_rgCode[n++] = 0x91000201; // mov x1, x16
+    m_rgCode[n++] = 0x58000070; // ldr x16, [pc, #12]
+    _ASSERTE((UINT32*)&m_pTarget == &m_rgCode[n + 2]);
+    m_rgCode[n++] = 0xd61f0200; // br  x16
+    n++;                        // empty 4 bytes for data alignment below
+    _ASSERTE(n == _countof(m_rgCode));
+    
+    
+    m_pTarget = GetPreStubEntryPoint();
+    m_pMethodDesc = (TADDR)pMD;
 }
 
 
@@ -638,6 +665,8 @@ void UpdateRegDisplayFromCalleeSavedRegisters(REGDISPLAY * pRD, CalleeSavedRegis
     pRD->pCurrentContext->X26 = pCalleeSaved->x26;
     pRD->pCurrentContext->X27 = pCalleeSaved->x27;
     pRD->pCurrentContext->X28 = pCalleeSaved->x28;
+    pRD->pCurrentContext->Fp  = pCalleeSaved->x29;
+    pRD->pCurrentContext->Lr  = pCalleeSaved->x30;
 
     T_KNONVOLATILE_CONTEXT_POINTERS * pContextPointers = pRD->pCurrentContextPointers;
     pContextPointers->X19 = (PDWORD64)&pCalleeSaved->x19;
@@ -650,6 +679,8 @@ void UpdateRegDisplayFromCalleeSavedRegisters(REGDISPLAY * pRD, CalleeSavedRegis
     pContextPointers->X26 = (PDWORD64)&pCalleeSaved->x26;
     pContextPointers->X27 = (PDWORD64)&pCalleeSaved->x27;
     pContextPointers->X28 = (PDWORD64)&pCalleeSaved->x28;
+    pContextPointers->Fp  = (PDWORD64)&pCalleeSaved->x29;
+    pContextPointers->Lr  = (PDWORD64)&pCalleeSaved->x30;
 }
 
 #ifndef CROSSGEN_COMPILE
@@ -727,10 +758,8 @@ void FaultingExceptionFrame::UpdateRegDisplay(const PREGDISPLAY pRD)
     pRD->pCurrentContextPointers->X26 = (PDWORD64)&m_ctx.X26;
     pRD->pCurrentContextPointers->X27 = (PDWORD64)&m_ctx.X27;
     pRD->pCurrentContextPointers->X28 = (PDWORD64)&m_ctx.X28;
-    pRD->pCurrentContextPointers->Fp = NULL;
-    pRD->pCurrentContextPointers->Lr = NULL;
-
-
+    pRD->pCurrentContextPointers->Fp = (PDWORD64)&m_ctx.Fp;
+    pRD->pCurrentContextPointers->Lr = (PDWORD64)&m_ctx.Lr;
 
     pRD->IsCallerContextValid = FALSE;
     pRD->IsCallerSPValid      = FALSE;        // Don't add usage of this field.  This is only temporary.
@@ -1030,60 +1059,6 @@ void ExceptionHijackEnd(void)
 {
     _ASSERTE(!"ARM64:NYI");
 }
-
-void RedirectedHandledJITCaseForGCThreadControl_Stub(void)
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-void RedirectedHandledJITCaseForDbgThreadControl_Stub(void)
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-void RedirectedHandledJITCaseForUserSuspend_Stub(void)
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-void RedirectedHandledJITCaseForYieldTask_Stub(void)
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
-void RedirectedHandledJITCaseForGCThreadControl_StubEnd()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
-void RedirectedHandledJITCaseForDbgThreadControl_StubEnd()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
-void RedirectedHandledJITCaseForUserSuspend_StubEnd()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
-void RedirectedHandledJITCaseForYieldTask_StubEnd()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
-
-VOID OnHijackObjectTripThread()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
-VOID OnHijackScalarTripThread()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
-VOID OnHijackInteriorPointerTripThread()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-
 };
 
 #ifdef FEATURE_COMINTEROP
@@ -1092,13 +1067,6 @@ extern "C" void GenericComPlusCallStub(void)
     _ASSERTE(!"ARM64:NYI");
 }
 #endif // FEATURE_COMINTEROP
-
-#ifdef FEATURE_PREJIT
-extern "C" void StubDispatchFixupStub()
-{
-    _ASSERTE(!"ARM64:NYI");
-}
-#endif
 
 //ARM64TODO: check if this should be amd64 and win64
 #ifdef _WIN64
@@ -1231,13 +1199,13 @@ extern "C" void getFPReturn(int fpSize, INT64 *retval)
     _ASSERTE(!"ARM64:NYI");
 }
 
-void StompWriteBarrierEphemeral()
+void StompWriteBarrierEphemeral(bool isRuntimeSuspended)
 {
     //ARM64TODO: implement this
     return;
 }
 
-void StompWriteBarrierResize(BOOL bReqUpperBoundsCheck)
+void StompWriteBarrierResize(bool isRuntimeSuspended, bool bReqUpperBoundsCheck)
 {
     //ARM64TODO: implement this
     return;
@@ -1644,6 +1612,8 @@ VOID StubLinkerCPU::EmitShuffleThunk(ShuffleEntry *pShuffleEntryArray)
     // field and save it in x9. Tailcall to the target method after re-arranging the arguments
     // ldr x9, [x0, #offsetof(DelegateObject, _methodPtrAux)]
     EmitLoadStoreRegImm(eLOAD, IntReg(9), IntReg(0), DelegateObject::GetOffsetOfMethodPtrAux());
+    //add x11, x0, DelegateObject::GetOffsetOfMethodPtrAux() - load the indirection cell into x11 used by ResolveWorkerAsmStub
+    EmitAddImm(IntReg(11), IntReg(0), DelegateObject::GetOffsetOfMethodPtrAux());
 
     for (ShuffleEntry* pEntry = pShuffleEntryArray; pEntry->srcofs != ShuffleEntry::SENTINEL; pEntry++)
     {
@@ -1745,53 +1715,291 @@ void StubLinkerCPU::EmitUnboxMethodStub(MethodDesc *pMD)
     EmitCallManagedMethod(pMD, TRUE /* tail call */);
 }
 
-#endif // CROSSGEN_COMPILE
-
-#endif // #ifndef DACCESS_COMPILE
-
 #ifdef FEATURE_READYTORUN
+
+//
+// Allocation of dynamic helpers
+//
+
+#define DYNAMIC_HELPER_ALIGNMENT sizeof(TADDR)
+
+#define BEGIN_DYNAMIC_HELPER_EMIT(size) \
+    SIZE_T cb = size; \
+    SIZE_T cbAligned = ALIGN_UP(cb, DYNAMIC_HELPER_ALIGNMENT); \
+    BYTE * pStart = (BYTE *)(void *)pAllocator->GetDynamicHelpersHeap()->AllocAlignedMem(cbAligned, DYNAMIC_HELPER_ALIGNMENT); \
+    BYTE * p = pStart;
+
+#define END_DYNAMIC_HELPER_EMIT() \
+    _ASSERTE(pStart + cb == p); \
+    while (p < pStart + cbAligned) { *(DWORD*)p = 0xBADC0DF0; p += 4; }\
+    ClrFlushInstructionCache(pStart, cbAligned); \
+    return (PCODE)pStart
+
+// Uses x8 as scratch register to store address of data label
+// After load x8 is increment to point to next data
+// only accepts positive offsets
+static void LoadRegPair(BYTE* p, int reg1, int reg2, UINT32 offset)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    // adr x8, <label>
+    *(DWORD*)(p + 0) = 0x10000008 | ((offset >> 2) << 5);
+    // ldp reg1, reg2, [x8], #16 ; postindex & wback
+    *(DWORD*)(p + 4) = 0xa8c10100 | (reg2 << 10) | reg1;
+}
+
 PCODE DynamicHelpers::CreateHelper(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+
+    // adr x8, <label>
+    // ldp x0, x12, [x8]
+    LoadRegPair(p, 0, 12, 16);
+    p += 8;
+    // br x12
+    *(DWORD*)p = 0xd61f0180;
+    p += 4;
+
+    // padding to make 8 byte aligned
+    *(DWORD*)p = 0xBADC0DF0; p += 4;
+    
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // target
+    *(PCODE*)p = target;
+    p += 8;
+    
+    END_DYNAMIC_HELPER_EMIT();
 }
 
 PCODE DynamicHelpers::CreateHelperWithArg(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+    
+    // adr x8, <label>
+    // ldp x1, x12, [x8]
+    LoadRegPair(p, 1, 12, 16);
+    p += 8;
+
+    // br x12
+    *(DWORD*)p = 0xd61f0180;
+    p += 4; 
+
+    // padding to make 8 byte aligned
+    *(DWORD*)p = 0xBADC0DF0; p += 4;
+    
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // target
+    *(PCODE*)p = target;
+    p += 8;
+    
+    END_DYNAMIC_HELPER_EMIT();  
 }
 
 PCODE DynamicHelpers::CreateHelper(LoaderAllocator * pAllocator, TADDR arg, TADDR arg2, PCODE target)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(40);
+    
+    // adr x8, <label>
+    // ldp x0, x1, [x8] ; wback
+    LoadRegPair(p, 0, 1, 16);
+    p += 8;
+
+    // ldr x12, [x8]
+    *(DWORD*)p = 0xf940010c;
+    p += 4;
+    // br x12
+    *(DWORD*)p = 0xd61f0180;
+    p += 4;     
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // arg2
+    *(TADDR*)p = arg2;
+    p += 8;
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+
+    END_DYNAMIC_HELPER_EMIT();      
 }
 
 PCODE DynamicHelpers::CreateHelperArgMove(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+    
+    // mov x1, x0
+    *(DWORD*)p = 0x91000001;
+    p += 4;
+
+    // adr x8, <label>
+    // ldp x0, x12, [x8]
+    LoadRegPair(p, 0, 12, 12);
+    p += 8;
+
+    // br x12
+    *(DWORD*)p = 0xd61f0180;
+    p += 4;     
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8; 
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+    
+    END_DYNAMIC_HELPER_EMIT();          
 }
 
 PCODE DynamicHelpers::CreateReturn(LoaderAllocator * pAllocator)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(4);
+    
+    // br lr
+    *(DWORD*)p = 0xd61f03c0;
+    p += 4;
+    END_DYNAMIC_HELPER_EMIT();              
 }
 
 PCODE DynamicHelpers::CreateReturnConst(LoaderAllocator * pAllocator, TADDR arg)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(16);
+ 
+    // ldr x0, <lable>
+    *(DWORD*)p = 0x58000040;
+    p += 4;
+    
+    // br lr
+    *(DWORD*)p = 0xd61f03c0;
+    p += 4;
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8; 
+
+    END_DYNAMIC_HELPER_EMIT();              
 }
 
 PCODE DynamicHelpers::CreateReturnIndirConst(LoaderAllocator * pAllocator, TADDR arg, INT8 offset)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(24);
+    
+    // ldr x0, <label>
+    *(DWORD*)p = 0x58000080;
+    p += 4;
+
+    // ldr x0, [x0]
+    *(DWORD*)p = 0xf9400000;
+    p += 4;
+    
+    // add x0, x0, offset
+    *(DWORD*)p = 0x91000000 | (offset << 10);
+    p += 4;
+    
+    // br lr
+    *(DWORD*)p = 0xd61f03c0;
+    p += 4;
+    
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8; 
+    
+    END_DYNAMIC_HELPER_EMIT();              
 }
 
 PCODE DynamicHelpers::CreateHelperWithTwoArgs(LoaderAllocator * pAllocator, TADDR arg, PCODE target)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(32);
+    
+    // adr x8, <label>
+    // ldp x2, x12, [x8]
+    LoadRegPair(p, 2, 12, 16);
+    p += 8;
+
+    // br x12
+    *(DWORD*)p = 0xd61f0180;
+    p += 4; 
+
+    // padding to make 8 byte aligned
+    *(DWORD*)p = 0xBADC0DF0; p += 4;
+    
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8; 
+
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+    END_DYNAMIC_HELPER_EMIT();              
 }
 
 PCODE DynamicHelpers::CreateHelperWithTwoArgs(LoaderAllocator * pAllocator, TADDR arg, TADDR arg2, PCODE target)
 {
-    UNREACHABLE();
+    STANDARD_VM_CONTRACT;
+
+    BEGIN_DYNAMIC_HELPER_EMIT(40);
+    
+    // adr x8, <label>
+    // ldp x2, x3, [x8]; wback
+    LoadRegPair(p, 2, 3, 16);
+    p += 8;
+    
+    // ldr x12, [x8]
+    *(DWORD*)p = 0xf940010c;
+    p += 4;
+
+    // br x12
+    *(DWORD*)p = 0xd61f0180;
+    p += 4;     
+
+    // label:
+    // arg
+    *(TADDR*)p = arg;
+    p += 8;
+    // arg2
+    *(TADDR*)p = arg2;
+    p += 8;
+    // target
+    *(TADDR*)p = target;
+    p += 8;
+    END_DYNAMIC_HELPER_EMIT();              
 }
-#endif
+
+PCODE DynamicHelpers::CreateDictionaryLookupHelper(LoaderAllocator * pAllocator, CORINFO_RUNTIME_LOOKUP * pLookup)
+{
+    STANDARD_VM_CONTRACT;
+
+    // TODO (NYI)
+    ThrowHR(E_NOTIMPL);
+}
+#endif // FEATURE_READYTORUN
+
+#endif // CROSSGEN_COMPILE
+
+#endif // #ifndef DACCESS_COMPILE

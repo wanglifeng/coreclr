@@ -1314,7 +1314,9 @@ void DisAssembler::DisasmBuffer(FILE*         pfile,
         return;
     }
 
-    WIN64_ONLY(pdis->SetAddr64(true));
+#ifdef _TARGET_64BIT_
+    pdis->SetAddr64(true);
+#endif
 
     // Store a pointer to the DisAssembler so that the callback functions
     // can get to it.
@@ -1531,9 +1533,7 @@ void    DisAssembler::disAsmCode(BYTE* hotCodePtr, size_t hotCodeSize, BYTE* col
 #endif // !DEBUG
 
 #ifdef DEBUG
-    static ConfigString fJITLateDisasmTo;
-
-    LPWSTR fileName = fJITLateDisasmTo.val(CLRConfig::INTERNAL_JITLateDisasmTo);
+    const wchar_t* fileName = JitConfig.JitLateDisasmTo();
     if (fileName != nullptr)
     {
         errno_t ec = _wfopen_s(&disAsmFile, fileName, W("a+"));
@@ -1543,13 +1543,13 @@ void    DisAssembler::disAsmCode(BYTE* hotCodePtr, size_t hotCodeSize, BYTE* col
         }
     }
 #else // !DEBUG
-    // NOTE: non-DEBUG builds always use stdout currently!
-    disAsmFile = stdout;
+    // NOTE: non-DEBUG builds always use jitstdout currently!
+    disAsmFile = jitstdout;
 #endif // !DEBUG
 
     if (disAsmFile == nullptr)
     {
-        disAsmFile = stdout;
+        disAsmFile = jitstdout;
     }
 
     // As this writes to a common file, this is not reentrant.
@@ -1591,7 +1591,7 @@ void    DisAssembler::disAsmCode(BYTE* hotCodePtr, size_t hotCodeSize, BYTE* col
     DisasmBuffer(disAsmFile, /* printIt */ true);
     fprintf(disAsmFile, "\n");
 
-    if (disAsmFile != stdout)
+    if (disAsmFile != jitstdout)
     {
         fclose(disAsmFile);
     }

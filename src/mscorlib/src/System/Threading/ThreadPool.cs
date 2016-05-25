@@ -1195,22 +1195,6 @@ namespace System.Threading
 #endif
 
         [SecurityCritical]
-        internal QueueUserWorkItemCallback(WaitCallback waitCallback, Object stateObj, bool compressStack, ref StackCrawlMark stackMark)
-        {
-            callback = waitCallback;
-            state = stateObj;
-            if (compressStack && !ExecutionContext.IsFlowSuppressed())
-            {
-                // clone the exection context
-                context = ExecutionContext.Capture(
-                    ref stackMark,
-                    ExecutionContext.CaptureOptions.IgnoreSyncCtx | ExecutionContext.CaptureOptions.OptimizeDefaultCase);
-            }
-        }
-
-        //
-        // internal test hook - used by tests to exercise work-stealing, etc.
-        //
         internal QueueUserWorkItemCallback(WaitCallback waitCallback, Object stateObj, ExecutionContext ec)
         {
             callback = waitCallback;
@@ -1224,7 +1208,6 @@ namespace System.Threading
 #if DEBUG
             MarkExecuted(false);
 #endif
-
             // call directly if it is an unsafe call OR EC flow is suppressed
             if (context == null)
             {
@@ -1257,6 +1240,73 @@ namespace System.Threading
             QueueUserWorkItemCallback obj = (QueueUserWorkItemCallback)state;
             WaitCallback wc = obj.callback as WaitCallback;
             Contract.Assert(null != wc);
+            wc(obj.state);
+        }
+    }
+
+    internal sealed class QueueUserWorkItemCallbackDefaultContext : IThreadPoolWorkItem
+    {
+        [System.Security.SecuritySafeCritical]
+        static QueueUserWorkItemCallbackDefaultContext() { }
+
+        private WaitCallback callback;
+        private Object state;
+
+#if DEBUG
+        private volatile int executed;
+
+        ~QueueUserWorkItemCallbackDefaultContext()
+        {
+            Contract.Assert(
+                executed != 0 || Environment.HasShutdownStarted || AppDomain.CurrentDomain.IsFinalizingForUnload(),
+                "A QueueUserWorkItemCallbackDefaultContext was never called!");
+        }
+
+        void MarkExecuted(bool aborted)
+        {
+            GC.SuppressFinalize(this);
+            Contract.Assert(
+                0 == Interlocked.Exchange(ref executed, 1) || aborted,
+                "A QueueUserWorkItemCallbackDefaultContext was called twice!");
+        }
+#endif
+
+        [SecurityCritical]
+        internal QueueUserWorkItemCallbackDefaultContext(WaitCallback waitCallback, Object stateObj)
+        {
+            callback = waitCallback;
+            state = stateObj;
+        }
+
+        [SecurityCritical]
+        void IThreadPoolWorkItem.ExecuteWorkItem()
+        {
+#if DEBUG
+            MarkExecuted(false);
+#endif
+            ExecutionContext.Run(ExecutionContext.PreAllocatedDefault, ccb, this, true);
+        }
+
+        [SecurityCritical]
+        void IThreadPoolWorkItem.MarkAborted(ThreadAbortException tae)
+        {
+#if DEBUG
+            // this workitem didn't execute because we got a ThreadAbortException prior to the call to ExecuteWorkItem.  
+            // This counts as being executed for our purposes.
+            MarkExecuted(true);
+#endif
+        }
+
+        [System.Security.SecurityCritical]
+        static internal ContextCallback ccb = new ContextCallback(WaitCallback_Context);
+
+        [System.Security.SecurityCritical]
+        static private void WaitCallback_Context(Object state)
+        {
+            QueueUserWorkItemCallbackDefaultContext obj = (QueueUserWorkItemCallbackDefaultContext)state;
+            WaitCallback wc = obj.callback as WaitCallback;
+            Contract.Assert(null != wc);
+            obj.callback = null;
             wc(obj.state);
         }
     }
@@ -1625,7 +1675,14 @@ namespace System.Threading
                 try { }
                 finally
                 {
-                    QueueUserWorkItemCallback tpcallBack = new QueueUserWorkItemCallback(callBack, state, compressStack, ref stackMark);
+                    ExecutionContext context = compressStack && !ExecutionContext.IsFlowSuppressed() ?
+                        ExecutionContext.Capture(ref stackMark, ExecutionContext.CaptureOptions.IgnoreSyncCtx | ExecutionContext.CaptureOptions.OptimizeDefaultCase) :
+                        null;
+
+                    IThreadPoolWorkItem tpcallBack = context == ExecutionContext.PreAllocatedDefault ?
+                                 new QueueUserWorkItemCallbackDefaultContext(callBack, state) :
+                                 (IThreadPoolWorkItem)new QueueUserWorkItemCallback(callBack, state, context);
+
                     ThreadPoolGlobals.workQueue.Enqueue(tpcallBack, true);
                     success = true;
                 }
@@ -1773,12 +1830,6 @@ namespace System.Threading
         [CLSCompliant(false)]
         unsafe public static bool UnsafeQueueNativeOverlapped(NativeOverlapped* overlapped)
         {
-#if FEATURE_CORECLR && !FEATURE_LEGACYNETCF
-            if(Environment.OSVersion.Platform == PlatformID.MacOSX)
-                throw new NotSupportedException(Environment.GetResourceString("Arg_NotSupportedException"));
-            Contract.EndContractBlock();
-#endif
-
             return PostQueuedCompletionStatus(overlapped);
         }
 
@@ -1877,12 +1928,6 @@ namespace System.Threading
 #pragma warning restore 618
         public static bool BindHandle(SafeHandle osHandle)
         {
-            #if FEATURE_CORECLR && !FEATURE_LEGACYNETCF
-            if(Environment.OSVersion.Platform == PlatformID.MacOSX)
-                throw new NotSupportedException(Environment.GetResourceString("Arg_NotSupportedException"));
-            Contract.EndContractBlock();
-            #endif
-
             if (osHandle == null)
                 throw new ArgumentNullException("osHandle");
             

@@ -27,6 +27,7 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 #include "gcinfoencoder.h"
 #endif
 
+
 // Get the register assigned to the given node
 
 regNumber CodeGenInterface::genGetAssignedReg(GenTreePtr tree)
@@ -225,15 +226,12 @@ void                CodeGen::genCodeForBBlist()
         regSet.rsSetRegsModified(RBM_INT_CALLEE_SAVED & ~RBM_FPBASE);
     }
 
-#if INLINE_NDIRECT
     /* If we have any pinvoke calls, we might potentially trash everything */
-    if  (compiler->info.compCallUnmanaged)
+    if (compiler->info.compCallUnmanaged)
     {
         noway_assert(isFramePointerUsed());  // Setup of Pinvoke frame currently requires an EBP style frame
         regSet.rsSetRegsModified(RBM_INT_CALLEE_SAVED & ~RBM_FPBASE);
     }
-
-#endif // INLINE_NDIRECT
 
     genPendingCallLabel = nullptr;
 
@@ -341,8 +339,8 @@ void                CodeGen::genCodeForBBlist()
         }
 
         regSet.rsMaskVars = newLiveRegSet;
-        gcInfo.gcMarkRegSetGCref(newRegGCrefSet DEBUG_ARG(true));
-        gcInfo.gcMarkRegSetByref(newRegByrefSet DEBUG_ARG(true));
+        gcInfo.gcMarkRegSetGCref(newRegGCrefSet DEBUGARG(true));
+        gcInfo.gcMarkRegSetByref(newRegByrefSet DEBUGARG(true));
 
         /* Blocks with handlerGetsXcptnObj()==true use GT_CATCH_ARG to
            represent the exception object (TYP_REF).
@@ -1151,7 +1149,7 @@ CodeGen::genCodeForTreeNode(GenTreePtr treeNode)
     case GT_LSH:
     case GT_RSH:
     case GT_RSZ:
-        genCodeForShift(treeNode->gtGetOp1(), treeNode->gtGetOp2(), treeNode);
+        genCodeForShift(treeNode);
         // genCodeForShift() calls genProduceReg()
         break;
 
@@ -1447,8 +1445,9 @@ CodeGen::genCodeForTreeNode(GenTreePtr treeNode)
             // Get the "kind" and type of the comparison.  Note that whether it is an unsigned cmp
             // is governed by a flag NOT by the inherent type of the node
             // TODO-ARM-CQ: Check if we can use the currently set flags.
+            CompareKind compareKind = ((cmp->gtFlags & GTF_UNSIGNED) != 0) ? CK_UNSIGNED : CK_SIGNED;
 
-            emitJumpKind jmpKind   = genJumpKindForOper(cmp->gtOper, (cmp->gtFlags & GTF_UNSIGNED) != 0);
+            emitJumpKind jmpKind   = genJumpKindForOper(cmp->gtOper, compareKind);
             BasicBlock * jmpTarget = compiler->compCurBB->bbJumpDest;
 
             inst_JMP(jmpKind, jmpTarget);
@@ -1467,7 +1466,8 @@ CodeGen::genCodeForTreeNode(GenTreePtr treeNode)
 
             BasicBlock* skipLabel = genCreateTempLabel();
 
-            inst_JMP(genJumpKindForOper(GT_EQ, true), skipLabel);
+            emitJumpKind jmpEqual = genJumpKindForOper(GT_EQ, CK_SIGNED);
+            inst_JMP(jmpEqual, skipLabel);
             // emit the call to the EE-helper that stops for GC (or other reasons)
 
             genEmitHelperCall(CORINFO_HELP_STOP_FOR_GC, 0, EA_UNKNOWN);
@@ -1669,15 +1669,17 @@ CodeGen::genRangeCheck(GenTreePtr  oper)
 
     if (arrIdx->isContainedIntOrIImmed())
     {
+        // To encode using a cmp immediate, we place the 
+        //  constant operand in the second position
         src1 = arrLen;
         src2 = arrIdx;
-        jmpKind = EJ_jbe;
+        jmpKind = genJumpKindForOper(GT_LE, CK_UNSIGNED); 
     }
     else
     {
         src1 = arrIdx;
         src2 = arrLen;
-        jmpKind = EJ_jae;
+        jmpKind = genJumpKindForOper(GT_GE, CK_UNSIGNED); 
     }
 
     genConsumeIfReg(src1);
@@ -1741,22 +1743,17 @@ instruction CodeGen::genGetInsForOper(genTreeOps oper, var_types type)
     return ins;
 }
 
-/** Generates the code sequence for a GenTree node that
- * represents a bit shift operation (<<, >>, >>>).
- *
- * Arguments: operand:  the value to be shifted by shiftBy bits.
- *            shiftBy:  the number of bits to shift the operand.
- *            parent:   the actual bitshift node (that specifies the
- *                      type of bitshift to perform.
- *
- * Preconditions:    a) All GenTrees are register allocated.
- *                   b) Either shiftBy is a contained constant or
- *                      it's an expression sitting in RCX.
- *                   c) The actual bit shift node is not stack allocated
- *                      nor contained (not yet supported).
- */
-void CodeGen::genCodeForShift(GenTreePtr operand, GenTreePtr shiftBy,
-                              GenTreePtr parent)
+//------------------------------------------------------------------------
+// genCodeForShift: Generates the code sequence for a GenTree node that
+// represents a bit shift or rotate operation (<<, >>, >>>, rol, ror).
+//
+// Arguments:
+//    tree - the bit shift node (that specifies the type of bit shift to perform).
+//
+// Assumptions:
+//    a) All GenTrees are register allocated.
+//
+void CodeGen::genCodeForShift(GenTreePtr tree)
 {
     NYI("genCodeForShift");
 }
@@ -1821,7 +1818,7 @@ void CodeGen::genUnspillRegIfNeeded(GenTree *tree)
         }
         else
         {
-            TempDsc* t = regSet.rsUnspillInPlace(unspillTree);
+            TempDsc* t = regSet.rsUnspillInPlace(unspillTree, unspillTree->gtRegNum);
             compiler->tmpRlsTemp(t);
             getEmitter()->emitIns_R_S(ins_Load(unspillTree->gtType),
                             emitActualTypeSize(unspillTree->gtType),
@@ -2071,21 +2068,21 @@ void*
 #else
 void
 #endif
-CodeGen::genCreateAndStoreGCInfo(unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUG_ARG(void* codePtr))
+CodeGen::genCreateAndStoreGCInfo(unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUGARG(void* codePtr))
 {
 #ifdef JIT32_GCENCODER
-    return genCreateAndStoreGCInfoJIT32(codeSize, prologSize, epilogSize DEBUG_ARG(codePtr));
+    return genCreateAndStoreGCInfoJIT32(codeSize, prologSize, epilogSize DEBUGARG(codePtr));
 #else
-    genCreateAndStoreGCInfoX64(codeSize, prologSize DEBUG_ARG(codePtr));
+    genCreateAndStoreGCInfoX64(codeSize, prologSize DEBUGARG(codePtr));
 #endif
 }
 
 // TODO-ARM-Cleanup: It seems that the ARM JIT (classic and otherwise) uses this method, so it seems to be inappropriately named?
 
-void                CodeGen::genCreateAndStoreGCInfoX64(unsigned codeSize, unsigned prologSize DEBUG_ARG(void* codePtr))
+void                CodeGen::genCreateAndStoreGCInfoX64(unsigned codeSize, unsigned prologSize DEBUGARG(void* codePtr))
 {
     IAllocator* allowZeroAlloc = new (compiler, CMK_GC) AllowZeroAllocator(compiler->getAllocatorGC());
-    GcInfoEncoder* gcInfoEncoder = new (compiler, CMK_GC) GcInfoEncoder(compiler->info.compCompHnd, compiler->info.compMethodInfo, allowZeroAlloc);
+    GcInfoEncoder* gcInfoEncoder = new (compiler, CMK_GC) GcInfoEncoder(compiler->info.compCompHnd, compiler->info.compMethodInfo, allowZeroAlloc, NOMEM);
     assert(gcInfoEncoder);
 
     // Follow the code pattern of the x86 gc info encoder (genCreateAndStoreGCInfoJIT32).

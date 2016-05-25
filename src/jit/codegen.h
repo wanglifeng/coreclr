@@ -90,9 +90,9 @@ private:
                                                         else
                                                             return REG_SPBASE; }
 
-    static emitJumpKind genJumpKindForOper(genTreeOps cmp, bool isUnsigned);
+    enum CompareKind { CK_SIGNED, CK_UNSIGNED, CK_LOGICAL };
+    static emitJumpKind genJumpKindForOper(genTreeOps cmp, CompareKind compareKind);
 
-#ifdef _TARGET_XARCH_
     // For a given compare oper tree, returns the conditions to use with jmp/set in 'jmpKind' array. 
     // The corresponding elements of jmpToTrueLabel indicate whether the target of the jump is to the
     // 'true' label or a 'false' label.  
@@ -101,11 +101,11 @@ private:
     // branch to on compare condition being true.  'false' label corresponds to the target to
     // branch to on condition being false.
     static void genJumpKindsForTree(GenTreePtr cmpTree, emitJumpKind jmpKind[2], bool jmpToTrueLabel[2]);
+
 #if !defined(_TARGET_64BIT_)
     static void genJumpKindsForTreeLongHi(GenTreePtr cmpTree, emitJumpKind jmpKind[2], bool jmpToTrueLabel[2]);
     static void genJumpKindsForTreeLongLo(GenTreePtr cmpTree, emitJumpKind jmpKind[2], bool jmpToTrueLabel[2]);
 #endif //!defined(_TARGET_64BIT_)
-#endif // _TARGET_XARCH_
 
     static bool         genShouldRoundFP();
 
@@ -182,11 +182,11 @@ private:
     // to be the sizes of the prolog and epilog, respectively.  In DEBUG, makes a check involving the
     // "codePtr", assumed to be a pointer to the start of the generated code.
 #ifdef JIT32_GCENCODER
-    void*               genCreateAndStoreGCInfo     (unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUG_ARG(void* codePtr));
-    void*               genCreateAndStoreGCInfoJIT32(unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUG_ARG(void* codePtr));
+    void*               genCreateAndStoreGCInfo     (unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUGARG(void* codePtr));
+    void*               genCreateAndStoreGCInfoJIT32(unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUGARG(void* codePtr));
 #else // !JIT32_GCENCODER
-    void                genCreateAndStoreGCInfo     (unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUG_ARG(void* codePtr));
-    void                genCreateAndStoreGCInfoX64  (unsigned codeSize, unsigned prologSize DEBUG_ARG(void* codePtr));
+    void                genCreateAndStoreGCInfo     (unsigned codeSize, unsigned prologSize, unsigned epilogSize DEBUGARG(void* codePtr));
+    void                genCreateAndStoreGCInfoX64  (unsigned codeSize, unsigned prologSize DEBUGARG(void* codePtr));
 #endif // !JIT32_GCENCODER
 
     /**************************************************************************
@@ -204,27 +204,6 @@ protected :
 
     static  const char *genInsName(instruction ins);
 #endif // DEBUG
-
-#ifdef LEGACY_BACKEND
-
-    //-------------------------------------------------------------------------
-    //
-    //  If we know that the flags register is set to a value that corresponds
-    //  to the current value of a register or variable, the following values
-    //  record that information.
-    //
-
-    emitLocation        genFlagsEqLoc;
-    regNumber           genFlagsEqReg;
-    unsigned            genFlagsEqVar;
-
-    void                genFlagsEqualToNone ();
-    void                genFlagsEqualToReg  (GenTreePtr tree, regNumber reg);
-    void                genFlagsEqualToVar  (GenTreePtr tree, unsigned  var);
-    bool                genFlagsAreReg      (regNumber reg);
-    bool                genFlagsAreVar      (unsigned  var);
-
-#endif // LEGACY_BACKEND
 
     //-------------------------------------------------------------------------
 
@@ -296,12 +275,15 @@ protected:
     // Prolog functions and data (there are a few exceptions for more generally used things)
     //
 
-
+    void                genEstablishFramePointer(int delta, bool reportUnwindData);
     void                genFnPrologCalleeRegArgs(regNumber xtraReg,                                            
                                                  bool *    pXtraRegClobbered,
                                                  RegState *regState);
     void                genEnregisterIncomingStackArgs();
     void                genCheckUseBlockInit();
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING) && defined(FEATURE_SIMD)
+    void                genClearStackVec3ArgUpperBits();
+#endif //FEATURE_UNIX_AMD64_STRUCT_PASSING && FEATURE_SIMD
 
 #if defined(_TARGET_ARM64_)
     bool                genInstrWithConstant(instruction ins,  
@@ -460,30 +442,27 @@ protected:
     void                genProfilingLeaveCallback(unsigned helper = CORINFO_HELP_PROF_FCN_LEAVE);
 #endif // PROFILING_SUPPORTED
 
-#if INLINE_NDIRECT
-    regMaskTP           genPInvokeMethodProlog(regMaskTP    initRegs);
-    void                genPInvokeMethodEpilog();    
-#endif // INLINE_NDIRECT
-
     void                genPrologPadForReJit();
 
-    void                genEmitCall(int                   callType,
-                                    CORINFO_METHOD_HANDLE methHnd,
-                                    INDEBUG_LDISASM_COMMA(CORINFO_SIG_INFO* sigInfo)
-                                    void*                 addr
-                                    X86_ARG(ssize_t       argSize),
-                                    emitAttr              retSize,
-                                    IL_OFFSETX            ilOffset,
-                                    regNumber             base   = REG_NA,
-                                    bool                  isJump = false,
-                                    bool                  isNoGC = false);
-
+    void                genEmitCall(int                                                 callType,
+                                    CORINFO_METHOD_HANDLE                               methHnd,
+                                    INDEBUG_LDISASM_COMMA(CORINFO_SIG_INFO*             sigInfo)
+                                    void*                                               addr
+                                    X86_ARG(ssize_t                                     argSize),
+                                    emitAttr                                            retSize
+                                    FEATURE_UNIX_AMD64_STRUCT_PASSING_ONLY_ARG(emitAttr secondRetSize),
+                                    IL_OFFSETX                                          ilOffset,
+                                    regNumber                                           base   = REG_NA,
+                                    bool                                                isJump = false,
+                                    bool                                                isNoGC = false);
+    
     void                genEmitCall(int                   callType, 
                                     CORINFO_METHOD_HANDLE methHnd,
                                     INDEBUG_LDISASM_COMMA(CORINFO_SIG_INFO* sigInfo)
                                     GenTreeIndir*         indir
                                     X86_ARG(ssize_t       argSize),
-                                    emitAttr              retSize,
+                                    emitAttr              retSize
+                                    FEATURE_UNIX_AMD64_STRUCT_PASSING_ONLY_ARG(emitAttr secondRetSize),
                                     IL_OFFSETX            ilOffset);
 
 
@@ -497,8 +476,7 @@ protected:
 
 #if defined(_TARGET_ARM64_)
 
-    void                genPopCalleeSavedRegistersAndFreeLclFrame(bool               jmpEpilog,
-                                                                  /* IN OUT */ bool* pUnwindStarted);
+    void                genPopCalleeSavedRegistersAndFreeLclFrame(bool jmpEpilog);
 
 #else // !defined(_TARGET_ARM64_)
 
@@ -550,17 +528,6 @@ protected:
     // End prolog/epilog generation
     //
     //-------------------------------------------------------------------------
-
-#if INLINE_NDIRECT
-
-    regNumber           genPInvokeCallProlog(LclVarDsc *    varDsc,
-                                             int            argSize,
-                                      CORINFO_METHOD_HANDLE methodToken,
-                                             BasicBlock *   returnLabel);
-
-    void                genPInvokeCallEpilog(LclVarDsc *    varDsc,
-                                             regMaskTP      retVal);
-#endif
 
 /*****************************************************************************/
 #ifdef DEBUGGING_SUPPORT
@@ -856,11 +823,7 @@ public :
 
     void                instInit();
 
-#ifdef LEGACY_BACKEND
-    regNumber           genIsEnregisteredIntVariable(GenTreePtr tree);
-#endif // LEGACY_BACKEND
     regNumber           genGetZeroRegister();
-    
 
     void                instGen         (instruction    ins);
 #ifdef _TARGET_XARCH_
@@ -937,7 +900,8 @@ public :
 
     void                instEmit_indCall(GenTreePtr     call,
                                          size_t         argSize,
-                                         emitAttr       retSize);
+                                         emitAttr       retSize
+                                         FEATURE_UNIX_AMD64_STRUCT_PASSING_ONLY_ARG(emitAttr    secondRetSize));
 
     void                instEmit_RM     (instruction    ins,
                                          GenTreePtr     tree,
@@ -1051,17 +1015,7 @@ public :
                                          unsigned *     indScale,
                                          regNumber *    indReg,
                                          unsigned *     cns);
-#ifdef LEGACY_BACKEND
-    void                sched_AM        (instruction    ins,
-                                         emitAttr       size,
-                                         regNumber      ireg,
-                                         bool           rdst,
-                                         GenTreePtr     tree,
-                                         unsigned       offs,
-                                         bool           cons  = false,
-                                         int            cval  = 0,
-                                         insFlags       flags = INS_FLAGS_DONT_CARE);
-#endif // LEGACY_BACKEND
+
     void                inst_set_SV_var (GenTreePtr     tree);
 
 #ifdef _TARGET_ARM_
@@ -1140,6 +1094,10 @@ public :
 #ifdef  DEBUG
     void    __cdecl     instDisp(instruction ins, bool noNL, const char *fmt, ...);
 #endif
+
+#ifdef _TARGET_XARCH_
+    instruction         genMapShiftInsToShiftByConstantIns(instruction ins, int shiftByValue);
+#endif // _TARGET_XARCH_
 
 };
 

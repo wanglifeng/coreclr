@@ -83,9 +83,9 @@
 #include "peimagelayout.inl"
 #include "ildbsymlib.h"
 
-#if defined(FEATURE_HOSTED_BINDER) && defined(FEATURE_APPX_BINDER)
+#if defined(FEATURE_APPX_BINDER)
 #include "clrprivbinderappx.h"
-#endif //defined(FEATURE_HOSTED_BINDER) && defined(FEATURE_APPX_BINDER)
+#endif // defined(FEATURE_APPX_BINDER)
 
 #if defined(PROFILING_SUPPORTED)
 #include "profilermetadataemitvalidator.h"
@@ -103,15 +103,6 @@
 #define COR_VTABLE_PTRSIZED     COR_VTABLE_32BIT
 #define COR_VTABLE_NOT_PTRSIZED COR_VTABLE_64BIT
 #endif // !_WIN64
-
-// Hash table parameter of available classes (name -> module/class) hash
-#define AVAILABLE_CLASSES_HASH_BUCKETS 1024
-#define AVAILABLE_CLASSES_HASH_BUCKETS_COLLECTIBLE 128
-#define PARAMTYPES_HASH_BUCKETS 23
-#define PARAMMETHODS_HASH_BUCKETS 11
-#define METHOD_STUBS_HASH_BUCKETS 11
-
-#define GUID_TO_TYPE_HASH_BUCKETS 16
 
 #define CEE_FILE_GEN_GROWTH_COLLECTIBLE 2048
 
@@ -851,10 +842,15 @@ void Module::Initialize(AllocMemTracker *pamTracker, LPCWSTR szName)
 
     m_dwTransientFlags &= ~((DWORD)CLASSES_FREED);  // Set flag indicating LookupMaps are now in a consistent and destructable state
 
+#ifdef FEATURE_READYTORUN
+    if (!HasNativeImage() && !IsResource())
+        m_pReadyToRunInfo = ReadyToRunInfo::Initialize(this, pamTracker);
+#endif
+
     // Initialize the instance fields that we need for all non-Resource Modules
     if (!IsResource())
     {
-        if (m_pAvailableClasses == NULL)
+        if (m_pAvailableClasses == NULL && !IsReadyToRun())
         {
             m_pAvailableClasses = EEClassHashTable::Create(this,
                 GetAssembly()->IsCollectible() ? AVAILABLE_CLASSES_HASH_BUCKETS_COLLECTIBLE : AVAILABLE_CLASSES_HASH_BUCKETS,
@@ -921,11 +917,6 @@ void Module::Initialize(AllocMemTracker *pamTracker, LPCWSTR szName)
     // Set up native image
     if (HasNativeImage())
         InitializeNativeImage(pamTracker);
-#ifdef FEATURE_READYTORUN
-    else
-    if (!IsResource())
-        m_pReadyToRunInfo = ReadyToRunInfo::Initialize(this, pamTracker);
-#endif
 #endif // FEATURE_PREJIT
 
 
@@ -1864,8 +1855,6 @@ PTR_Module Module::ComputePreferredZapModule(Module * pDefinitionModule,
 //
 // Is pModule likely a dependency of pOtherModule? Heuristic used by preffered zap module algorithm.
 // It can return both false positives and negatives.
-//
-// Keep in sync with tools\mdilbind\mdilmodule.cpp
 //
 static bool IsLikelyDependencyOf(Module * pModule, Module * pOtherModule)
 {
@@ -2904,12 +2893,6 @@ BOOL Module::IsNoStringInterning()
         // Default is string interning
         BOOL fNoStringInterning = FALSE;
 
-#ifdef FEATURE_LEGACYNETCF
-        // NetCF ignored this attribute
-        if (GetAppDomain()->GetAppDomainCompatMode() != BaseDomain::APPDOMAINCOMPAT_APP_EARLIER_THAN_WP8)
-        {
-#endif
-
         HRESULT hr;
         
         // This flag applies to assembly, but it is stored on module so it can be cached in ngen image
@@ -2942,10 +2925,6 @@ BOOL Module::IsNoStringInterning()
                 fNoStringInterning = TRUE;
             }
         }
-
-#ifdef FEATURE_LEGACYNETCF
-        }
-#endif
 
 #ifdef _DEBUG
         static ConfigDWORD g_NoStringInterning;
@@ -3043,7 +3022,6 @@ BOOL Module::GetNeutralResourcesLanguage(LPCUTF8 * cultureName, ULONG * cultureN
 }
 
 
-#ifndef FEATURE_CORECLR
 BOOL Module::HasDefaultDllImportSearchPathsAttribute()
 {
     CONTRACTL
@@ -3073,7 +3051,6 @@ BOOL Module::HasDefaultDllImportSearchPathsAttribute()
 
     return (m_dwPersistedFlags & DEFAULT_DLL_IMPORT_SEARCH_PATHS_STATUS) != 0 ;
 }
-#endif // !FEATURE_CORECLR
 
 // Returns a BOOL to indicate if we have computed whether compiler has instructed us to
 // wrap the non-CLS compliant exceptions or not.
@@ -5657,13 +5634,10 @@ Assembly * Module::GetAssemblyIfLoadedFromNativeAssemblyRefWithRefDefMismatch(md
             // This extended check is designed only to find assemblies loaded via an AssemblySpecBindingCache based binder. Verify that's what we found.
             if(pAssemblyCandidate != NULL)
             {
-#ifdef FEATURE_HOSTED_BINDER
                 if (!pAssemblyCandidate->GetManifestFile()->HasHostAssembly())
-#endif // FEATURE_HOSTED_BINDER
                 {
                     pAssembly = pAssemblyCandidate;
                 }
-#ifdef FEATURE_HOSTED_BINDER
                 else
                 {
                     DWORD binderFlags = 0;
@@ -5682,7 +5656,6 @@ Assembly * Module::GetAssemblyIfLoadedFromNativeAssemblyRefWithRefDefMismatch(md
                         _ASSERTE("Non-AssemblySpecBindingCache based assembly found with extended search" && !(IsStackWalkerThread() || IsGCThread()) && IsGenericInstantiationLookupCompareThread());
                     }
                 }
-#endif // FEATURE_HOSTED_BINDER
             }
         }
     }
@@ -5783,7 +5756,6 @@ Module::GetAssemblyIfLoaded(
                 _ASSERTE(szWinRtClassName != NULL);
                 
                 CLRPrivBinderWinRT * pWinRtBinder = pAppDomainExamine->GetWinRtBinder();
-#ifdef FEATURE_HOSTED_BINDER
                 if (pWinRtBinder == nullptr)
                 {   // We are most likely in AppX mode (calling AppX::IsAppXProcess() for verification is painful in DACCESS)
 #ifndef DACCESS_COMPILE
@@ -5820,7 +5792,6 @@ Module::GetAssemblyIfLoaded(
 #endif // defined(FEATURE_APPX_BINDER)
                     }
                 }
-#endif //FEATURE_HOSTED_BINDER
                 
                 if (pWinRtBinder != nullptr)
                 {
@@ -9199,26 +9170,11 @@ void Module::ExpandAll(DataImage *image)
     mdToken tk;
     DWORD assemblyFlags = GetAssembly()->GetFlags();
 
-    // construct a compact layout writer if necessary
-#ifdef MDIL
-    ICompactLayoutWriter *pCompactLayoutWriter = NULL;
-    if (!GetAppDomain()->IsNoMDILCompilationDomain())
-    {
-        pCompactLayoutWriter = ICompactLayoutWriter::MakeCompactLayoutWriter(this, image->m_pZapImage);
-    }
-#endif //MDIL
     //
     // Explicitly load the global class.
     //
 
     MethodTable *pGlobalMT = GetGlobalMethodTable();
-#ifdef MDIL
-    if (pCompactLayoutWriter != NULL && pGlobalMT != NULL)
-    {
-        EEClass *pGlocalClass = pGlobalMT->GetClass();
-        pGlocalClass->WriteCompactLayout(pCompactLayoutWriter, image->m_pZapImage);
-    }
-#endif //MDIL
 
     //
     // Load all classes.  This also fills out the
@@ -9264,15 +9220,6 @@ void Module::ExpandAll(DataImage *image)
             
             if (t.IsNull()) // Skip this type
                 continue; 
-
-#ifdef MDIL
-            if (pCompactLayoutWriter != NULL)
-            {
-                MethodTable *pMT = t.AsMethodTable();
-                EEClass *pClass = pMT->GetClass();
-                pClass->WriteCompactLayout(pCompactLayoutWriter, image->m_pZapImage);
-            }
-#endif // MDIL
 
             if (!t.HasInstantiation())
             {
@@ -9526,12 +9473,6 @@ void Module::ExpandAll(DataImage *image)
         m_pBinder->BindAll();
     }
 
-#ifdef MDIL
-    if (pCompactLayoutWriter)
-    {
-        pCompactLayoutWriter->Flush();
-    }
-#endif // MDIL
 } // Module::ExpandAll
 
 /* static */
@@ -10005,9 +9946,7 @@ void Module::Save(DataImage *image)
     GetReliabilityContract();
     IsPreV4Assembly();
 
-#ifndef FEATURE_CORECLR
     HasDefaultDllImportSearchPathsAttribute();
-#endif
 
     // Precompute property information to avoid runtime metadata lookup
     PopulatePropertyInfoMap();
@@ -13921,7 +13860,7 @@ static void ProfileDataAllocateTokenDefinitions(ProfileEmitter * pEmitter, Modul
     mdProfileData->size = sizeof(CORBBTPROF_BLOB_ENTRY);
 }
 
-// Responsible for writing out the profile data if the COMPLUS_BBInstr 
+// Responsible for writing out the profile data if the COMPlus_BBInstr 
 // environment variable is set.  This is called when the module is unloaded
 // (usually at shutdown).
 HRESULT Module::WriteMethodProfileDataLogFile(bool cleanup)

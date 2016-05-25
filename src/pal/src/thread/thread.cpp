@@ -30,8 +30,15 @@ Abstract:
 #include "pal/process.h"
 #include "pal/module.h"
 #include "pal/dbgmsg.h"
-#include "pal/misc.h"
+#include "pal/environ.h"
 #include "pal/init.h"
+
+#if defined(__NetBSD__) && !HAVE_PTHREAD_GETCPUCLOCKID
+#include <sys/cdefs.h>
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#include <kvm.h>
+#endif
 
 #include <signal.h>
 #include <pthread.h>
@@ -206,6 +213,8 @@ Function:
 VOID TLSCleanup()
 {
     SPINLOCKDestroy(&free_threads_spinlock);
+
+    pthread_key_delete(thObjKey);
 }
 
 /*++
@@ -1166,7 +1175,7 @@ CorUnix::InternalSetThreadPriority(
     {
         goto InternalSetThreadPriorityExit;
     }
-        
+
     pTargetThread->Lock(pThread);
 
     /* validate the requested priority */
@@ -1216,6 +1225,17 @@ CorUnix::InternalSetThreadPriority(
         palError = ERROR_INTERNAL_ERROR;
         goto InternalSetThreadPriorityExit;
     }
+
+#if !HAVE_SCHED_OTHER_ASSIGNABLE
+    /* Defining thread priority for SCHED_OTHER is implementation defined.
+       Some platforms like NetBSD cannot reassign it as they are dynamic.
+    */
+    if (policy == SCHED_OTHER)
+    {
+        TRACE("Pthread priority levels for SCHED_OTHER cannot be reassigned on this platform\n");
+        goto InternalSetThreadPriorityExit;
+    }
+#endif
 
 #if HAVE_SCHED_GET_PRIORITY
     max_priority = sched_get_priority_max(policy);
@@ -1318,6 +1338,7 @@ CorUnix::GetThreadTimesInternal(
     __int64 calcTime;
     BOOL retval = FALSE;
     const __int64 SECS_TO_NS = 1000000000; /* 10^9 */
+    const __int64 USECS_TO_NS = 1000;      /* 10^3 */
 
 #if HAVE_MACH_THREADS
     thread_basic_info resUsage;
@@ -1326,8 +1347,6 @@ CorUnix::GetThreadTimesInternal(
     CPalThread *pthrTarget = NULL;
     IPalObject *pobjThread = NULL;
     mach_msg_type_number_t resUsage_count = THREAD_BASIC_INFO_COUNT;
-
-    const __int64 USECS_TO_NS = 1000;      /* 10^3 */
 
     pthrCurrent = InternalGetCurrentThread();
     palError = InternalGetThreadDataFromHandle(
@@ -1384,6 +1403,89 @@ CorUnix::GetThreadTimesInternal(
 
     retval = TRUE;
 
+    goto GetThreadTimesInternalExit;
+
+#elif defined(__NetBSD__) && !HAVE_PTHREAD_GETCPUCLOCKID /* Currently unimplemented */
+
+    PAL_ERROR palError;
+    CPalThread *pThread;
+    CPalThread *pTargetThread;
+    IPalObject *pobjThread = NULL;
+    kvm_t *kd;
+    int cnt, nlwps;
+    struct kinfo_lwp *klwp;
+    int i;
+    bool found = false;
+
+    pThread = InternalGetCurrentThread();
+
+    palError = InternalGetThreadDataFromHandle(
+        pThread,
+        hThread,
+        0, // THREAD_GET_CONTEXT
+        &pTargetThread,
+        &pobjThread
+        );
+    if (palError != NO_ERROR)
+    {
+        ASSERT("Unable to get thread data from handle %p"
+              "thread\n", hThread);
+        SetLastError(ERROR_INTERNAL_ERROR);
+        goto SetTimesToZero;
+    }
+
+    kd = kvm_open(NULL, NULL, NULL, KVM_NO_FILES, "kvm_open");
+    if (kd == NULL)
+    {
+        ASSERT("kvm_open(3) error");
+        SetLastError(ERROR_INTERNAL_ERROR);
+        goto SetTimesToZero;
+    }
+
+    pTargetThread->Lock(pThread);
+
+    klwp = kvm_getlwps(kd, getpid(), 0, sizeof(struct kinfo_lwp), &nlwps);
+    if (klwp == NULL || nlwps < 1)
+    {
+        kvm_close(kd);
+        ASSERT("Unable to get clock from %p thread\n", hThread);
+        SetLastError(ERROR_INTERNAL_ERROR);
+        pTargetThread->Unlock(pThread);
+        goto SetTimesToZero;
+    }
+
+    for (i = 0; i < nlwps; i++)
+    {
+        if (klwp[i].l_lid == THREADSilentGetCurrentThreadId())
+        {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found)
+    {
+        kvm_close(kd);
+        ASSERT("Unable to get clock from %p thread\n", hThread);
+        SetLastError(ERROR_INTERNAL_ERROR);
+        pTargetThread->Unlock(pThread);
+        goto SetTimesToZero;
+    }
+
+    pTargetThread->Unlock(pThread);
+
+    kvm_close(kd);
+
+    calcTime = (__int64) klwp[i].l_rtime_sec * SECS_TO_NS;
+    calcTime += (__int64) klwp[i].l_rtime_usec * USECS_TO_NS;
+    lpUserTime->dwLowDateTime = (DWORD)calcTime;
+    lpUserTime->dwHighDateTime = (DWORD)(calcTime >> 32);
+
+    /* NetBSD as of (7.0) doesn't differentiate used time in user/kernel for lwp */
+    lpKernelTime->dwLowDateTime = 0;
+    lpKernelTime->dwHighDateTime = 0;
+
+    retval = TRUE;
     goto GetThreadTimesInternalExit;
 
 #else //HAVE_MACH_THREADS
@@ -1667,7 +1769,7 @@ CorUnix::InitializeGlobalThreadData(
     // Read in the environment to see whether we need to change the default
     // thread stack size.
     //
-    pszStackSize = MiscGetenv(PAL_THREAD_DEFAULT_STACK_SIZE);
+    pszStackSize = EnvironGetenv(PAL_THREAD_DEFAULT_STACK_SIZE);
     if (NULL != pszStackSize)
     {
         // Environment variable exists
@@ -1677,15 +1779,9 @@ CorUnix::InitializeGlobalThreadData(
         {
             CPalThread::s_dwDefaultThreadStackSize = dw;
         }
-    }
 
-#if !HAVE_MACH_EXCEPTIONS
-    //
-    // Initialize the thread suspension signal sets.
-    //
-    
-    CThreadSuspensionInfo::InitializeSignalSets();
-#endif // !HAVE_MACH_EXCEPTIONS
+        InternalFree(pszStackSize);
+    }
 
     return palError;
 }
@@ -2725,51 +2821,41 @@ PAL_InjectActivation(
 
 extern mach_port_t s_ExceptionPort;
 
-// Returns a pointer to the handler node that should be initialized next. The first time this is called for a
-// thread the bottom node will be returned. Thereafter the top node will be returned. Also returns the Mach
-// exception port that should be registered.
-CorUnix::CThreadMachExceptionHandlerNode *CorUnix::CThreadMachExceptionHandlers::GetNodeForInitialization()
-{
-    return &m_node;
-}
-
 // Get handler details for a given type of exception. If successful the structure pointed at by pHandler is
 // filled in and true is returned. Otherwise false is returned.
 bool CorUnix::CThreadMachExceptionHandlers::GetHandler(exception_type_t eException, CorUnix::MachExceptionHandler *pHandler)
 {
     exception_mask_t bmExceptionMask = (1 << eException);
-    CThreadMachExceptionHandlerNode *pNode = &m_node;
-    int idxHandler = GetIndexOfHandler(bmExceptionMask, pNode);
+    int idxHandler = GetIndexOfHandler(bmExceptionMask);
 
     // Did we find a handler?
     if (idxHandler == -1)
         return false;
 
     // Found one, so initialize the output structure with the details.
-    pHandler->m_mask = pNode->m_masks[idxHandler];
-    pHandler->m_handler = pNode->m_handlers[idxHandler];
-    pHandler->m_behavior = pNode->m_behaviors[idxHandler];
-    pHandler->m_flavor = pNode->m_flavors[idxHandler];
+    pHandler->m_mask = m_masks[idxHandler];
+    pHandler->m_handler = m_handlers[idxHandler];
+    pHandler->m_behavior = m_behaviors[idxHandler];
+    pHandler->m_flavor = m_flavors[idxHandler];
 
     return true;
 }
 
 // Look for a handler for the given exception within the given handler node. Return its index if successful or
 // -1 otherwise.
-int CorUnix::CThreadMachExceptionHandlers::GetIndexOfHandler(exception_mask_t bmExceptionMask,
-                                                             CorUnix::CThreadMachExceptionHandlerNode *pNode)
+int CorUnix::CThreadMachExceptionHandlers::GetIndexOfHandler(exception_mask_t bmExceptionMask)
 {
     // Check all handler entries for one handling the exception mask.
-    for (int i = 0; i < pNode->m_nPorts; i++)
+    for (mach_msg_type_number_t i = 0; i < m_nPorts; i++)
     {
-        if (pNode->m_masks[i] & bmExceptionMask &&      // Entry covers this exception type
-            pNode->m_handlers[i] != MACH_PORT_NULL &&   // And the handler isn't null
-            pNode->m_handlers[i] != s_ExceptionPort)    // And the handler isn't ourselves
-        {
+        // Entry covers this exception type and the handler isn't null
+        if (m_masks[i] & bmExceptionMask && m_handlers[i] != MACH_PORT_NULL)
+        { 
+            _ASSERTE(m_handlers[i] != s_ExceptionPort);
+
             // One more check; has the target handler port become dead?
             mach_port_type_t ePortType;
-            if (mach_port_type(mach_task_self(), pNode->m_handlers[i], &ePortType) == KERN_SUCCESS &&
-                !(ePortType & MACH_PORT_TYPE_DEAD_NAME))
+            if (mach_port_type(mach_task_self(), m_handlers[i], &ePortType) == KERN_SUCCESS && !(ePortType & MACH_PORT_TYPE_DEAD_NAME))
             {
                 // Got a matching entry.
                 return i;

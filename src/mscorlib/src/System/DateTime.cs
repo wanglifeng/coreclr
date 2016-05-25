@@ -487,20 +487,12 @@ namespace System {
             if (!(value is DateTime)) {
                 throw new ArgumentException(Environment.GetResourceString("Arg_MustBeDateTime"));
             }
-    
-            long valueTicks = ((DateTime)value).InternalTicks;
-            long ticks = InternalTicks;
-            if (ticks > valueTicks) return 1;
-            if (ticks < valueTicks) return -1;
-            return 0;
+            
+            return Compare(this, (DateTime)value);
         }
 
         public int CompareTo(DateTime value) {
-            long valueTicks = value.InternalTicks;
-            long ticks = InternalTicks;
-            if (ticks > valueTicks) return 1;
-            if (ticks < valueTicks) return -1;
-            return 0;
+            return Compare(this, value);
         }
     
         // Returns the tick count corresponding to the given year, month, and day.
@@ -928,14 +920,6 @@ namespace System {
                 long ticks = 0;
                 ticks = GetSystemTimeAsFileTime();
 
-#if FEATURE_LEGACYNETCF
-            // Windows Phone 7.0/7.1 return the ticks up to millisecond, not up to the 100th nanosecond.
-            if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8)
-            {
-                long ticksms = ticks / TicksPerMillisecond;
-                ticks = ticksms * TicksPerMillisecond;
-            }
-#endif
                 return new DateTime( ((UInt64)(ticks + FileTimeOffset)) | KindUtc);
             }
         }

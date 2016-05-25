@@ -30,11 +30,6 @@ using namespace CorUnix;
 /* ------------------- Definitions ------------------------------*/
 SET_DEFAULT_DEBUG_CHANNEL(SYNC);
 
-enum
-{
-    c_cchMaxSemaphore = MAX_LONGPATH + 1
-};
-
 CObjectType CorUnix::otSemaphore(
                 otiSemaphore,
                 NULL,   // No cleanup routine
@@ -45,8 +40,8 @@ CObjectType CorUnix::otSemaphore(
                 0,      // Should be SEMAPHORE_ALL_ACCESS; currently ignored (no Win32 security)
                 CObjectType::SecuritySupported,
                 CObjectType::SecurityInfoNotPersisted,
-                CObjectType::ObjectCanHaveName,
-                CObjectType::CrossProcessDuplicationAllowed,
+                CObjectType::UnnamedObject,
+                CObjectType::LocalDuplicationOnly,
                 CObjectType::WaitableObject,
                 CObjectType::ObjectCanBeUnsignaled,
                 CObjectType::ThreadReleaseAltersSignalCount,

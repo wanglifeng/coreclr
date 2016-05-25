@@ -37,8 +37,10 @@ extern "C"
 */
 extern Volatile<LONG> terminator;
 
-// The process ID of this process, so we can avoid excessive calls to getpid().
+// The process and session ID of this process, so we can avoid excessive calls to getpid() and getsid().
 extern DWORD gPID;
+extern DWORD gSID;
+
 extern LPWSTR pAppDir;
 
 /*++
@@ -132,14 +134,14 @@ void PROCAbort();
 
 /*++
 Function:
-  PROCShutdownProcess
+  PROCNotifyProcessShutdown
   
   Calls the abort handler to do any shutdown cleanup. Call be
   called from the unhandled native exception handler.
 
 (no return value)
 --*/
-void PROCShutdownProcess();
+void PROCNotifyProcessShutdown();
 
 /*++
 Function:

@@ -7,6 +7,7 @@
 //
 
 #include <cstdlib>
+#include <cstring>
 #include <assert.h>
 #include <dirent.h>
 #include <dlfcn.h>
@@ -15,7 +16,10 @@
 #include <string>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include "coreruncommon.h"
+#include "coreclrhost.h"
+#include <unistd.h>
 
 #define SUCCEEDED(Status) ((Status) >= 0)
 
@@ -28,31 +32,7 @@ static const char* serverGcVar = "CORECLR_SERVER_GC";
 // used in the same way as serverGcVar. Concurrent GC is on by default.
 static const char* concurrentGcVar = "CORECLR_CONCURRENT_GC";
 
-// Prototype of the coreclr_initialize function from the libcoreclr.so
-typedef int (*InitializeCoreCLRFunction)(
-            const char* exePath,
-            const char* appDomainFriendlyName,
-            int propertyCount,
-            const char** propertyKeys,
-            const char** propertyValues,
-            void** hostHandle,
-            unsigned int* domainId);
-
-// Prototype of the coreclr_shutdown function from the libcoreclr.so
-typedef int (*ShutdownCoreCLRFunction)(
-            void* hostHandle,
-            unsigned int domainId);
-
-// Prototype of the coreclr_execute_assembly function from the libcoreclr.so
-typedef int (*ExecuteAssemblyFunction)(
-            void* hostHandle,
-            unsigned int domainId,
-            int argc,
-            const char** argv,
-            const char* managedAssemblyPath,
-            unsigned int* exitCode);
-
-#if defined(__LINUX__)
+#if defined(__linux__)
 #define symlinkEntrypointExecutable "/proc/self/exe"
 #elif !defined(__APPLE__)
 #define symlinkEntrypointExecutable "/proc/curproc/exe"
@@ -66,12 +46,20 @@ bool GetEntrypointExecutableAbsolutePath(std::string& entrypointExecutable)
 
     // Get path to the executable for the current process using
     // platform specific means.
-#if defined(__LINUX__) || !defined(__APPLE__)
-    
-    // On non-Mac OS, return the symlink that will be resolved by GetAbsolutePath
-    // to fetch the entrypoint EXE absolute path, inclusive of filename.
-    entrypointExecutable.assign(symlinkEntrypointExecutable);
-    result = true;
+#if defined(__linux__) || (defined(__NetBSD__) && !defined(KERN_PROC_PATHNAME))
+    // On Linux, fetch the entry point EXE absolute path, inclusive of filename.
+    char exe[PATH_MAX];
+    ssize_t res = readlink(symlinkEntrypointExecutable, exe, PATH_MAX - 1);
+    if (res != -1)
+    {
+        exe[res] = '\0';
+        entrypointExecutable.assign(exe);
+        result = true;
+    }
+    else
+    {
+        result = false;
+    }
 #elif defined(__APPLE__)
     
     // On Mac, we ask the OS for the absolute path to the entrypoint executable
@@ -88,7 +76,29 @@ bool GetEntrypointExecutableAbsolutePath(std::string& entrypointExecutable)
             result = true;
         }
     }
- #endif 
+#elif defined(__NetBSD__) && defined(KERN_PROC_PATHNAME)
+    static const int name[] = {
+        CTL_KERN, KERN_PROC_ARGS, -1, KERN_PROC_PATHNAME,
+    };
+    char path[MAXPATHLEN];
+    size_t len;
+
+    len = sizeof(path);
+    if (sysctl(name, __arraycount(name), path, &len, NULL, 0) != -1)
+    {
+        entrypointExecutable.assign(path);
+        result = true;
+    }
+    else
+    {
+        result = false;
+    }
+#else
+    // On non-Mac OS, return the symlink that will be resolved by GetAbsolutePath
+    // to fetch the entrypoint EXE absolute path, inclusive of filename.
+    entrypointExecutable.assign(symlinkEntrypointExecutable);
+    result = true;
+#endif 
 
     return result;
 }
@@ -159,7 +169,7 @@ void AddFilesFromDirectoryToTpaList(const char* directory, std::string& tpaList)
                 ".ni.exe",
                 ".exe",
                 };
-                
+
     DIR* dir = opendir(directory);
     if (dir == nullptr)
     {
@@ -254,6 +264,20 @@ int ExecuteManagedAssembly(
     // Indicates failure
     int exitCode = -1;
 
+#ifdef _ARM_
+    // LIBUNWIND-ARM has a bug of side effect with DWARF mode
+    // Ref: https://github.com/dotnet/coreclr/issues/3462
+    // This is why Fedora is disabling it by default as well.
+    // Assuming that we cannot enforce the user to set
+    // environmental variables for third party packages,
+    // we set the environmental variable of libunwind locally here.
+
+    // Without this, any exception handling will fail, so let's do this
+    // as early as possible.
+    // 0x1: DWARF / 0x2: FRAME / 0x4: EXIDX
+    putenv(const_cast<char *>("UNW_ARM_UNWIND_METHOD=6"));
+#endif // _ARM_
+
     std::string coreClrDllPath(clrFilesAbsolutePath);
     coreClrDllPath.append("/");
     coreClrDllPath.append(coreClrDll);
@@ -268,7 +292,14 @@ int ExecuteManagedAssembly(
     std::string appPath;
     GetDirectory(managedAssemblyAbsolutePath, appPath);
 
+    // Construct native search directory paths
     std::string nativeDllSearchDirs(appPath);
+    char *coreLibraries = getenv("CORE_LIBRARIES");
+    if (coreLibraries)
+    {
+        nativeDllSearchDirs.append(":");
+        nativeDllSearchDirs.append(coreLibraries);
+    }
     nativeDllSearchDirs.append(":");
     nativeDllSearchDirs.append(clrFilesAbsolutePath);
 
@@ -278,9 +309,9 @@ int ExecuteManagedAssembly(
     void* coreclrLib = dlopen(coreClrDllPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (coreclrLib != nullptr)
     {
-        InitializeCoreCLRFunction initializeCoreCLR = (InitializeCoreCLRFunction)dlsym(coreclrLib, "coreclr_initialize");
-        ExecuteAssemblyFunction executeAssembly = (ExecuteAssemblyFunction)dlsym(coreclrLib, "coreclr_execute_assembly");
-        ShutdownCoreCLRFunction shutdownCoreCLR = (ShutdownCoreCLRFunction)dlsym(coreclrLib, "coreclr_shutdown");
+        coreclr_initialize_ptr initializeCoreCLR = (coreclr_initialize_ptr)dlsym(coreclrLib, "coreclr_initialize");
+        coreclr_execute_assembly_ptr executeAssembly = (coreclr_execute_assembly_ptr)dlsym(coreclrLib, "coreclr_execute_assembly");
+        coreclr_shutdown_ptr shutdownCoreCLR = (coreclr_shutdown_ptr)dlsym(coreclrLib, "coreclr_shutdown");
 
         if (initializeCoreCLR == nullptr)
         {
@@ -300,14 +331,20 @@ int ExecuteManagedAssembly(
             // Server GC is off by default, while concurrent GC is on by default.
             // Actual checking of these string values is done in coreclr_initialize.
             const char* useServerGc = std::getenv(serverGcVar);
-            if (useServerGc == nullptr) {
+            if (useServerGc == nullptr)
+            {
                 useServerGc = "0";
             }
             
             const char* useConcurrentGc = std::getenv(concurrentGcVar);
-            if (useConcurrentGc == nullptr) {
+            if (useConcurrentGc == nullptr)
+            {
                 useConcurrentGc = "1";
             }
+
+            // CoreCLR expects strings "true" and "false" instead of "1" and "0".
+            useServerGc = std::strcmp(useServerGc, "1") == 0 ? "true" : "false";
+            useConcurrentGc = std::strcmp(useConcurrentGc, "1") == 0 ? "true" : "false";
             
             // Allowed property names:
             // APPBASE
@@ -331,8 +368,8 @@ int ExecuteManagedAssembly(
                 "APP_NI_PATHS",
                 "NATIVE_DLL_SEARCH_DIRECTORIES",
                 "AppDomainCompatSwitch",
-                "SERVER_GC",
-                "CONCURRENT_GC"
+                "System.GC.Server",
+                "System.GC.Concurrent"
             };
             const char *propertyValues[] = {
                 // TRUSTED_PLATFORM_ASSEMBLIES
@@ -345,9 +382,9 @@ int ExecuteManagedAssembly(
                 nativeDllSearchDirs.c_str(),
                 // AppDomainCompatSwitch
                 "UseLatestBehaviorWhenTFMNotSpecified",
-                // SERVER_GC
+                // System.GC.Server
                 useServerGc,
-                // CONCURRENT_GC
+                // System.GC.Concurrent
                 useConcurrentGc
             };
 

@@ -30,7 +30,7 @@ Abstract:
 #include "pal/critsect.h"
 #include "pal/dbgmsg.h"
 #include "pal/utils.h"
-#include "pal/misc.h"
+#include "pal/environ.h"
 #include "pal/virtual.h"
 #include "pal/stackstring.hpp"
 
@@ -49,6 +49,18 @@ Abstract:
 #include <sys/resource.h>
 #include <debugmacrosext.h>
 #include <semaphore.h>
+#include <stdint.h>
+
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
+
+#ifdef __NetBSD__
+#include <sys/cdefs.h>
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#include <kvm.h>
+#endif
 
 using namespace CorUnix;
 
@@ -116,8 +128,22 @@ LPWSTR g_lpwstrAppDir = NULL;
 // Thread ID of thread that has started the ExitProcess process 
 Volatile<LONG> terminator = 0;
 
-// Process ID of this process.
+// Process and session ID of this process.
 DWORD gPID = (DWORD) -1;
+DWORD gSID = (DWORD) -1;
+
+// The lowest common supported semaphore length, including null character
+// NetBSD-7.99.25: 15 characters
+// MacOSX 10.11: 31 -- Core 1.0 RC2 compatibility
+#if defined(__NetBSD__)
+#define CLR_SEM_MAX_NAMELEN 15
+#else
+#define CLR_SEM_MAX_NAMELEN (NAME_MAX - 4)
+#endif
+
+// The runtime waits on this semaphore if the dbgshim startup semaphore exists
+Volatile<sem_t *> g_continueSem = SEM_FAILED;
+char g_continueSemName[CLR_SEM_MAX_NAMELEN];
 
 // Function to call during PAL/process shutdown/abort
 Volatile<PSHUTDOWN_CALLBACK> g_shutdownCallback = nullptr;
@@ -150,11 +176,11 @@ PROCGetProcessStatus(
     );
 
 static BOOL getFileName(LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
-                        char *lpFileName);
-static char ** buildArgv(LPCWSTR lpCommandLine, LPSTR lpAppPath,
+                        PathCharString& lpFileName);
+static char ** buildArgv(LPCWSTR lpCommandLine, PathCharString& lpAppPath,
                          UINT *pnArg, BOOL prependLoader);
-static BOOL getPath(LPCSTR lpFileName, UINT iLen, LPSTR  lpPathFileName);
-static int checkFileType(char *lpFileName);
+static BOOL getPath(PathCharString& lpFileName, PathCharString& lpPathFileName);
+static int checkFileType(LPCSTR lpFileName);
 static BOOL PROCEndProcess(HANDLE hProcess, UINT uExitCode,
                            BOOL bTerminateUnconditionally);
 
@@ -179,6 +205,26 @@ GetCurrentProcessId(
     LOGEXIT("GetCurrentProcessId returns DWORD %#x\n", gPID);
     PERF_EXIT(GetCurrentProcessId);
     return gPID;
+}
+
+
+/*++
+Function:
+  GetCurrentSessionId
+
+See MSDN doc.
+--*/
+DWORD
+PALAPI
+GetCurrentSessionId(
+            VOID)
+{
+    PERF_ENTRY(GetCurrentSessionId);
+    ENTRY("GetCurrentSessionId()\n" );
+
+    LOGEXIT("GetCurrentSessionId returns DWORD %#x\n", gSID);
+    PERF_EXIT(GetCurrentSessionId);
+    return gSID;
 }
 
 
@@ -545,7 +591,6 @@ CorUnix::InternalCreateProcess(
     int iFdErr = -1;
     
     pid_t processId;
-    char * lpFileName;
     PathCharString lpFileNamePS;
     char **lppArgv = NULL;
     UINT nArg;
@@ -660,41 +705,31 @@ CorUnix::InternalCreateProcess(
         }
     }
 
-    lpFileName = lpFileNamePS.OpenStringBuffer(MAX_LONGPATH-1);
-    if (NULL == lpFileName)
-    {
-        palError = ERROR_NOT_ENOUGH_MEMORY;
-        goto InternalCreateProcessExit;
-    }
-    if (!getFileName(lpApplicationName, lpCommandLine, lpFileName))
+    if (!getFileName(lpApplicationName, lpCommandLine, lpFileNamePS))
     {
         ERROR("Can't find executable!\n");
         palError = ERROR_FILE_NOT_FOUND;
         goto InternalCreateProcessExit;
     }
     
-    lpFileNamePS.CloseBuffer(MAX_LONGPATH-1);
     /* check type of file */
-    iRet = checkFileType(lpFileName);
+    iRet = checkFileType(lpFileNamePS);
 
     switch (iRet)
     {
         case FILE_ERROR: /* file not found, or not an executable */
-            WARN ("File is not valid (%s)", lpFileName);
+            WARN ("File is not valid (%s)", lpFileNamePS.GetString());
             palError = ERROR_FILE_NOT_FOUND;
             goto InternalCreateProcessExit;
 
         case FILE_PE: /* PE/COFF file */
-            /*Get the path name where the PAL DLL was loaded from
-             * I am using MAX_LONGPATH - (strlen(PROCESS_PELOADER_FILENAME)+1)
-             * as the length as I have to append the file name at the end */
-            if ( PAL_GetPALDirectoryA( lpFileName,
-                                      (MAX_LONGPATH - (strlen(PROCESS_PELOADER_FILENAME)+1))))
+            //Get the path name where the PAL DLL was loaded from
+            if ( PAL_GetPALDirectoryA( lpFileNamePS ))
             {
-                if ((strcat_s(lpFileName, lpFileNamePS.GetSizeOf(), "/") != SAFECRT_SUCCESS) ||
-                    (strcat_s(lpFileName, lpFileNamePS.GetSizeOf(), PROCESS_PELOADER_FILENAME) != SAFECRT_SUCCESS))
+                if (lpFileNamePS.Append("/", 1) == FALSE  ||
+                    lpFileNamePS.Append( PROCESS_PELOADER_FILENAME, strlen(PROCESS_PELOADER_FILENAME)) == FALSE)
                 {
-                    ERROR("strcpy_s/strcat_s failed!\n");
+                    ERROR("Append failed!\n");
                     palError = ERROR_INTERNAL_ERROR;
                     goto InternalCreateProcessExit;
                 }
@@ -713,7 +748,7 @@ CorUnix::InternalCreateProcess(
             break;  /* nothing to do */
 
         case FILE_DIR:/*Directory*/
-            WARN ("File is a Directory (%s)", lpFileName);
+            WARN ("File is a Directory (%s)", lpFileNamePS.GetString());
             palError = ERROR_ACCESS_DENIED;
             goto InternalCreateProcessExit;
             break;
@@ -726,7 +761,7 @@ CorUnix::InternalCreateProcess(
 
     /* build Argument list, lppArgv is allocated in buildArgv function and
        requires to be freed */
-    lppArgv = buildArgv(lpCommandLine, lpFileName, &nArg, iRet==1);
+    lppArgv = buildArgv(lpCommandLine, lpFileNamePS, &nArg, iRet==1);
 
     /* set the Environment variable */
     if (lpEnvironment != NULL)
@@ -968,11 +1003,11 @@ CorUnix::InternalCreateProcess(
 
         if (EnvironmentArray)
         {
-            execve(lpFileName, lppArgv, EnvironmentArray);
+            execve(lpFileNamePS, lppArgv, EnvironmentArray);
         }
         else
         {
-            execve(lpFileName, lppArgv, palEnvironment);
+            execve(lpFileNamePS, lppArgv, palEnvironment);
         }
 
         /* if we get here, it means the execve function call failed so just exit */
@@ -1375,9 +1410,6 @@ PAL_SetShutdownCallback(
     g_shutdownCallback = callback;
 }
 
-#define RuntimeStartupSemaphoreName "/RuntimeStartupEvent%08x"
-#define RuntimeContinueSemaphoreName "/RuntimeContinueEvent%08x"
-
 static bool IsCoreClrModule(const char* pModulePath)
 {
     // Strip off everything up to and including the last slash in the path to get name
@@ -1391,33 +1423,61 @@ static bool IsCoreClrModule(const char* pModulePath)
     return _stricmp(pModuleName, MAKEDLLNAME_A("coreclr")) == 0;
 }
 
+// Build the semaphore names using the PID and a value that can be used for distinguishing
+// between processes with the same PID (which ran at different times). This is to avoid
+// cases where a prior process with the same PID exited abnormally without having a chance
+// to clean up its semaphore. 
+// Note to anyone modifying these names in the future: Semaphore names on OS X are limited
+// to SEM_NAME_LEN characters, including null. SEM_NAME_LEN is 31 (at least on OS X 10.11).
+// NetBSD limits semaphore names to 15 characters, including null (at least up to 7.99.25).
+// Keep 31 length for Core 1.0 RC2 compatibility
+#if defined(__NetBSD__)
+static const char* RuntimeStartupSemaphoreName = "/clrst%08llx";
+static const char* RuntimeOldContinueSemaphoreName = "/clrco%08llx";
+static const char* RuntimeContinueSemaphoreName = "/clrct%08llx";
+#else
+static const char* RuntimeStartupSemaphoreName = "/clrst%08x%016llx";
+static const char* RuntimeOldContinueSemaphoreName = "/clrco%08x%016llx";
+static const char* RuntimeContinueSemaphoreName = "/clrct%08x%016llx";
+#endif
+
+#if defined(__NetBSD__)
+static uint64_t HashSemaphoreName(uint64_t a, uint64_t b)
+{
+	return (a ^ b) & 0xffffffff;
+}
+#else
+#define HashSemaphoreName(a,b) a,b
+#endif
+
 class PAL_RuntimeStartupHelper
 {
     LONG m_ref;
     bool m_canceled;
-    DWORD m_processId;
     PPAL_STARTUP_CALLBACK m_callback;
     PVOID m_parameter;
     DWORD m_threadId;
     HANDLE m_threadHandle;
 
+    DWORD m_processId;
+
+    // A value that, used in conjunction with the process ID, uniquely identifies a process.
+    // See the format we use for debugger semaphore names for why this is necessary.
+    UINT64 m_processIdDisambiguationKey;
+
     // Debugger waits on this semaphore and the runtime signals it on startup.
     sem_t *m_startupSem;
-
-    // Debuggee waits on this semaphore and the debugger signals it after the callback returns.
-    sem_t *m_continueSem;
 
 public:
     PAL_RuntimeStartupHelper(DWORD dwProcessId, PPAL_STARTUP_CALLBACK pfnCallback, PVOID parameter) :
         m_ref(1),
         m_canceled(false),
-        m_processId(dwProcessId),
         m_callback(pfnCallback),
         m_parameter(parameter),
         m_threadId(0),
         m_threadHandle(NULL),
-        m_startupSem(SEM_FAILED),
-        m_continueSem(SEM_FAILED)
+        m_processId(dwProcessId),
+        m_startupSem(SEM_FAILED)
     {
     }
 
@@ -1425,20 +1485,17 @@ public:
     {
         if (m_startupSem != SEM_FAILED)
         {
-            char startupSemName[NAME_MAX - 4];
-            sprintf_s(startupSemName, sizeof(startupSemName), RuntimeStartupSemaphoreName, m_processId);
+            char startupSemName[CLR_SEM_MAX_NAMELEN];
+            sprintf_s(startupSemName,
+                      sizeof(startupSemName),
+                      RuntimeStartupSemaphoreName,
+                      HashSemaphoreName(m_processId,
+                                        m_processIdDisambiguationKey));
 
             sem_close(m_startupSem);
             sem_unlink(startupSemName);
         }
-        if (m_continueSem != SEM_FAILED)
-        {
-            char continueSemName[NAME_MAX - 4];
-            sprintf_s(continueSemName, sizeof(continueSemName), RuntimeContinueSemaphoreName, m_processId);
 
-            sem_close(m_continueSem);
-            sem_unlink(continueSemName);
-        }
         if (m_threadHandle != NULL)
         {
             CloseHandle(m_threadHandle);
@@ -1447,7 +1504,7 @@ public:
 
     LONG AddRef()
     {
-        LONG ref = InterlockedIncrement(&m_ref);    
+        LONG ref = InterlockedIncrement(&m_ref);
         return ref;
     }
 
@@ -1461,35 +1518,63 @@ public:
         return ref;
     }
 
+    PAL_ERROR GetSemError()
+    {
+        PAL_ERROR pe;
+        switch (errno)
+        {
+            case ENOENT:
+                pe = ERROR_NOT_FOUND;
+                break;
+            case EACCES:
+                pe = ERROR_INVALID_ACCESS;
+                break;
+            case EINVAL:
+            case ENAMETOOLONG:
+                pe = ERROR_INVALID_NAME;
+                break;
+            case ENOMEM:
+                pe = ERROR_OUTOFMEMORY;
+                break;
+            case EEXIST:
+                pe = ERROR_ALREADY_EXISTS;
+                break;
+            case ENOSPC:
+                pe = ERROR_TOO_MANY_SEMAPHORES;
+                break;
+            default:
+                pe = ERROR_INVALID_PARAMETER;
+                break;
+        }
+        return pe;
+    }
+
     PAL_ERROR Register()
     {
         CPalThread *pThread = InternalGetCurrentThread();
-        char startupSemName[NAME_MAX - 4];
-        char continueSemName[NAME_MAX - 4];
+        char startupSemName[CLR_SEM_MAX_NAMELEN];
         PAL_ERROR pe = NO_ERROR;
 
-        sprintf_s(startupSemName, sizeof(startupSemName), RuntimeStartupSemaphoreName, m_processId);
-        sprintf_s(continueSemName, sizeof(continueSemName), RuntimeContinueSemaphoreName, m_processId);
+        // See semaphore name format for details about this value. We store it so that
+        // it can be used by the cleanup code that removes the semaphore with sem_unlink.
+        INDEBUG(BOOL disambiguationKeyRet = )
+        GetProcessIdDisambiguationKey(m_processId, &m_processIdDisambiguationKey);
+        _ASSERTE(disambiguationKeyRet == TRUE || m_processIdDisambiguationKey == 0);
 
-        TRACE("PAL_RuntimeStartupHelper.Register startup '%s' continue '%s'\n", startupSemName, continueSemName);
+        sprintf_s(startupSemName,
+                  sizeof(startupSemName),
+                  RuntimeStartupSemaphoreName,
+                  HashSemaphoreName(m_processId,
+                                    m_processIdDisambiguationKey));
 
-        // Create the continue semaphore first so we don't race with PAL_NotifyRuntimeStarted. This open will fail if another 
-        // debugger is trying to attach to this process because the name will already exist.
-        m_continueSem = sem_open(continueSemName, O_CREAT | O_EXCL | O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO, 0);
-        if (m_continueSem == SEM_FAILED)
-        {
-            TRACE("sem_open(continue) failed: errno is %d (%s)\n", errno, strerror(errno));
-            pe = ERROR_INVALID_PARAMETER;
-            goto exit;
-        }
+        TRACE("PAL_RuntimeStartupHelper.Register startup sem '%s'\n", startupSemName);
 
-        // Create the debuggee startup semaphore so the runtime (debuggee) knows to wait for a debugger 
-        // connection.
-        m_startupSem = sem_open(startupSemName, O_CREAT | O_EXCL | O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO, 0);
+        // Create the debuggee startup semaphore so the runtime (debuggee) knows to wait for a debugger connection.
+        m_startupSem = sem_open(startupSemName, O_CREAT | O_EXCL, S_IRWXU, 0);
         if (m_startupSem == SEM_FAILED)
         {
             TRACE("sem_open(startup) failed: errno is %d (%s)\n", errno, strerror(errno));
-            pe = ERROR_INVALID_PARAMETER;
+            pe = GetSemError();
             goto exit;
         }
 
@@ -1522,12 +1607,6 @@ public:
     {
         m_canceled = true;
 
-        // Tell the runtime to continue
-        if (sem_post(m_continueSem) != 0)
-        {
-            ASSERT("sem_post(continueSem) failed: errno is %d (%s)\n", errno, strerror(errno));
-        }
-
         // Tell the worker thread to continue
         if (sem_post(m_startupSem) != 0)
         {
@@ -1545,92 +1624,116 @@ public:
         }
     }
 
-    PAL_ERROR InvokeStartupCallback(bool *pCoreClrExists)
+    PAL_ERROR InvokeStartupCallback()
     {
         PAL_ERROR pe = NO_ERROR;
 
-        *pCoreClrExists = false;
-
-        // Enumerate all the modules in the process and invoke the callback 
-        // for the coreclr module if found.
-        DWORD count;
-        ProcessModules *listHead = CreateProcessModules(m_processId, &count);
-        if (listHead == NULL)
+        if (!m_canceled)
         {
-            TRACE("CreateProcessModules failed for pid %d\n", m_processId);
-            pe = ERROR_INVALID_PARAMETER;
-            goto exit;
-        }
-
-        for (ProcessModules *entry = listHead; entry != NULL; entry = entry->Next)
-        {
-            if (IsCoreClrModule(entry->Name))
+            // Enumerate all the modules in the process and invoke the callback 
+            // for the coreclr module if found.
+            DWORD count;
+            ProcessModules *listHead = CreateProcessModules(m_processId, &count);
+            if (listHead == NULL)
             {
-                *pCoreClrExists = true;
+                TRACE("CreateProcessModules failed for pid %d\n", m_processId);
+                pe = ERROR_INVALID_PARAMETER;
+                goto exit;
+            }
 
-                PAL_CPP_TRY
+            for (ProcessModules *entry = listHead; entry != NULL; entry = entry->Next)
+            {
+                if (IsCoreClrModule(entry->Name))
                 {
-                    TRACE("InvokeStartupCallback executing callback %s\n", entry->Name);
-                    m_callback(entry->Name, entry->BaseAddress, m_parameter);
-                }
-                PAL_CPP_CATCH_ALL
-                {
-                }
-                PAL_CPP_ENDTRY
+                    PAL_CPP_TRY
+                    {
+                        TRACE("InvokeStartupCallback executing callback %p %s\n", entry->BaseAddress, entry->Name);
+                        m_callback(entry->Name, entry->BaseAddress, m_parameter);
+                    }
+                        PAL_CPP_CATCH_ALL
+                    {
+                    }
+                    PAL_CPP_ENDTRY
 
-                // Currently only the first coreclr module in a process is supported
-                break;
+                        // Currently only the first coreclr module in a process is supported
+                        break;
+                }
+            }
+
+        exit:
+            if (listHead != NULL)
+            {
+                DestroyProcessModules(listHead);
             }
         }
 
-    exit:
-        if (*pCoreClrExists)
-        {
-            // Wake up all the runtimes
-            if (sem_post(m_continueSem) != 0)
-            {
-                ASSERT("sem_post(continueSem) failed: errno is %d (%s)\n", errno, strerror(errno));
-            }
-        }
-
-        if (listHead != NULL)
-        {
-            DestroyProcessModules(listHead);
-        }
         return pe;
     }
 
     void StartupHelperThread()
     {
-        bool coreclrExists = false;
+        char continueSemName[CLR_SEM_MAX_NAMELEN];
+        sem_t *continueSem = SEM_FAILED;
+        PAL_ERROR pe = NO_ERROR;
 
-        PAL_ERROR pe = InvokeStartupCallback(&coreclrExists);
-        if (pe == NO_ERROR)
+        sprintf_s(continueSemName,
+                  sizeof(continueSemName),
+                  RuntimeContinueSemaphoreName,
+                  HashSemaphoreName(m_processId,
+                                    m_processIdDisambiguationKey));
+
+        TRACE("StartupHelperThread continue sem '%s'\n", continueSemName);
+
+        // Does the continue semaphore exists? If it does, the runtime is ready to be debugged.
+        continueSem = sem_open(continueSemName, 0);
+        if (continueSem != SEM_FAILED)
         {
-            if (!coreclrExists && !m_canceled)
+            TRACE("StartupHelperThread continue sem exists - invoking callback\n");
+            pe = InvokeStartupCallback();
+        }
+        else if (errno == ENOENT)
+        {
+            // Wait until the coreclr runtime (debuggee) starts up
+            if (sem_wait(m_startupSem) == 0)
             {
-                // Wait until the coreclr runtime (debuggee) starts up
-                if (sem_wait(m_startupSem) == 0)
+                // The continue semaphore should exists now and is needed to wake up the runtimes below
+                continueSem = sem_open(continueSemName, 0);
+                if (continueSem != SEM_FAILED) 
                 {
-                    if (!m_canceled)
-                    {
-                        pe = InvokeStartupCallback(&coreclrExists);
-                        if (pe == NO_ERROR)
-                        {
-                            // We should always find a coreclr module
-                            _ASSERTE(coreclrExists);
-                        }
-                    }
+                    TRACE("StartupHelperThread continue sem exists after wait - invoking callback\n");
+                    pe = InvokeStartupCallback();
                 }
-                else 
+                else
                 {
-                    TRACE("sem_wait(startup) failed: errno is %d (%s)\n", errno, strerror(errno));
-                    pe = ERROR_INVALID_HANDLE;
+                    TRACE("sem_open(continue) failed: errno is %d (%s)\n", errno, strerror(errno));
+                    pe = GetSemError();
                 }
             }
+            else 
+            {
+                TRACE("sem_wait(startup) failed: errno is %d (%s)\n", errno, strerror(errno));
+                pe = GetSemError();
+            }
+        }
+        else
+        {
+            pe = GetSemError();
         }
 
-        if (pe != NO_ERROR)
+        // Wake up the runtime even on error and cancelation
+        if (continueSem != SEM_FAILED)
+        {
+            if (sem_post(continueSem) != 0)
+            {
+                TRACE("sem_post(continueSem) failed: errno is %d (%s)\n", errno, strerror(errno));
+                pe = GetSemError();
+            }
+
+            sem_close(continueSem);
+        }
+
+        // Invoke the callback on errors
+        if (pe != NO_ERROR && !m_canceled)
         {
             SetLastError(pe);
             m_callback(NULL, NULL, m_parameter);
@@ -1741,33 +1844,43 @@ BOOL
 PALAPI
 PAL_NotifyRuntimeStarted()
 {
-    char szStartupSemName[NAME_MAX - 4];
-    char szContinueSemName[NAME_MAX - 4];
+    char startupSemName[CLR_SEM_MAX_NAMELEN];
     sem_t *startupSem = SEM_FAILED;
-    sem_t *continueSem = SEM_FAILED;
     BOOL result = TRUE;
 
-    sprintf_s(szStartupSemName, sizeof(szStartupSemName), RuntimeStartupSemaphoreName, gPID);
-    sprintf_s(szContinueSemName, sizeof(szContinueSemName), RuntimeContinueSemaphoreName, gPID);
+    UINT64 processIdDisambiguationKey = 0;
+    GetProcessIdDisambiguationKey(gPID, &processIdDisambiguationKey);
 
-    TRACE("PAL_NotifyRuntimeStarted opening startup '%s' continue '%s'\n", szStartupSemName, szContinueSemName);
+    sprintf_s(startupSemName, sizeof(startupSemName), RuntimeStartupSemaphoreName, HashSemaphoreName(gPID, processIdDisambiguationKey));
+    sprintf_s(g_continueSemName, sizeof(g_continueSemName), RuntimeOldContinueSemaphoreName, HashSemaphoreName(gPID, processIdDisambiguationKey));
+
+    TRACE("PAL_NotifyRuntimeStarted opening continue (old) '%s' startup '%s'\n", g_continueSemName, startupSemName);
+
+    // For backwards compatibility with RC2 (see issue #4410) first OPEN the continue semaphore with the old name "clrcoXXXX".
+    g_continueSem = sem_open(g_continueSemName, 0);
+    if (g_continueSem == SEM_FAILED)
+    {
+        // Create the new continue semaphore name "clrctXXXX"
+        sprintf_s(g_continueSemName, sizeof(g_continueSemName), RuntimeContinueSemaphoreName, HashSemaphoreName(gPID, processIdDisambiguationKey));
+
+        TRACE("PAL_NotifyRuntimeStarted creating continue '%s'\n", g_continueSemName);
+
+        // Create the continue semaphore. This tells dbgshim that coreclr is initialized and ready.
+        g_continueSem = sem_open(g_continueSemName, O_CREAT | O_EXCL, S_IRWXU, 0);
+        if (g_continueSem == SEM_FAILED)
+        {
+            ASSERT("sem_open(%s) failed: %d (%s)\n", g_continueSemName, errno, strerror(errno));
+            result = FALSE;
+            goto exit;
+        }
+    }
 
     // Open the debugger startup semaphore. If it doesn't exists, then we do nothing and
     // the function is successful.
-    startupSem = sem_open(szStartupSemName, O_RDWR);
+    startupSem = sem_open(startupSemName, 0);
     if (startupSem == SEM_FAILED)
     {
-        TRACE("sem_open(%s) failed: %d (%s)\n", szStartupSemName, errno, strerror(errno));
-        goto exit;
-    }
-
-    // Open the debuggee continue semaphore. If we can open the startup sem and not this one
-    // something is seriously wrong.
-    continueSem = sem_open(szContinueSemName, O_RDWR);
-    if (continueSem == SEM_FAILED)
-    {
-        ASSERT("sem_open(%s) failed: %d (%s)\n", szContinueSemName, errno, strerror(errno));
-        result = FALSE;
+        TRACE("sem_open(%s) failed: %d (%s)\n", startupSemName, errno, strerror(errno));
         goto exit;
     }
 
@@ -1779,8 +1892,8 @@ PAL_NotifyRuntimeStarted()
         goto exit;
     }
 
-    // Now wait until the debugger notification is finished
-    if (sem_wait(continueSem) != 0)
+    // Now wait until the debugger's runtime startup notification is finished
+    if (sem_wait(g_continueSem) != 0)
     {
         ASSERT("sem_wait(continueSem) failed: errno is %d (%s)\n", errno, strerror(errno));
         result = FALSE;
@@ -1792,11 +1905,170 @@ exit:
     {
         sem_close(startupSem);
     }
-    if (continueSem != SEM_FAILED)
-    {
-        sem_close(continueSem);
-    }
     return result;
+}
+
+/*++
+    PAL_CleanupTargetProcess
+
+    Cleanup the target process's name continue semaphore
+    on the debugger side when the debugger detects the
+    process termination.
+
+Parameters:
+    pid - process id
+    disambiguationKey - key to make process id unique
+
+Return value:
+    None
+--*/
+VOID
+PALAPI
+PAL_CleanupTargetProcess(
+    IN int pid,
+    IN UINT64 disambiguationKey)
+{
+    char continueSemName[NAME_MAX - 4];
+
+    sprintf_s(continueSemName,
+              sizeof(continueSemName),
+              RuntimeContinueSemaphoreName,
+              pid,
+              disambiguationKey);
+
+    sem_unlink(continueSemName);
+}
+
+/*++
+ Function:
+  GetProcessIdDisambiguationKey
+
+  Get a numeric value that can be used to disambiguate between processes with the same PID,
+  provided that one of them is still running. The numeric value can mean different things
+  on different platforms, so it should not be used for any other purpose. Under the hood,
+  it is implemented based on the creation time of the process.
+--*/
+BOOL
+GetProcessIdDisambiguationKey(DWORD processId, UINT64 *disambiguationKey)
+{
+    if (disambiguationKey == nullptr)
+    {
+        _ASSERTE(!"disambiguationKey argument cannot be null!");
+        return FALSE;
+    }
+
+    *disambiguationKey = 0;
+
+#if defined(__APPLE__)
+
+    // On OS X, we return the process start time expressed in Unix time (the number of seconds
+    // since the start of the Unix epoch).
+    struct kinfo_proc info = {};
+    size_t size = sizeof(info);
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, processId };
+    int ret = ::sysctl(mib, sizeof(mib)/sizeof(*mib), &info, &size, nullptr, 0);
+
+    if (ret == 0)
+    {
+        timeval procStartTime = info.kp_proc.p_starttime;
+        long secondsSinceEpoch = procStartTime.tv_sec;
+
+        *disambiguationKey = secondsSinceEpoch;
+        return TRUE;
+    }
+    else
+    {
+        _ASSERTE(!"Failed to get start time of a process.");
+        return FALSE;
+    }
+
+#elif defined(__NetBSD__)
+
+    // On NetBSD, we return the process start time expressed in Unix time (the number of seconds
+    // since the start of the Unix epoch).
+    kvm_t *kd;
+    int cnt;
+    struct kinfo_proc2 *info;
+
+    kd = kvm_open(nullptr, nullptr, nullptr, KVM_NO_FILES, "kvm_open");
+    if (kd == nullptr)
+    {
+        _ASSERTE(!"Failed to get start time of a process.");
+        return FALSE;
+    }
+
+    info = kvm_getproc2(kd, KERN_PROC_PID, processId, sizeof(struct kinfo_proc2), &cnt);
+    if (info == nullptr || cnt < 1)
+    {
+        kvm_close(kd);
+        _ASSERTE(!"Failed to get start time of a process.");
+        return FALSE;
+    }
+
+    kvm_close(kd);
+
+    long secondsSinceEpoch = info->p_ustart_sec;
+    *disambiguationKey = secondsSinceEpoch;
+
+    return TRUE;
+
+#elif defined(HAVE_PROCFS_CTL)
+
+    // Here we read /proc/<pid>/stat file to get the start time for the process.
+    // We return this value (which is expressed in jiffies since boot time).
+
+    // Making something like: /proc/123/stat
+    char statFileName[64];
+
+    INDEBUG(int chars = )
+    snprintf(statFileName, sizeof(statFileName), "/proc/%d/stat", processId);
+    _ASSERTE(chars > 0 && chars <= sizeof(statFileName));
+
+    FILE *statFile = fopen(statFileName, "r");
+    if (statFile == nullptr) 
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+
+    char *line = nullptr;
+    size_t lineLen = 0;
+    if (getline(&line, &lineLen, statFile) == -1)
+    {
+        _ASSERTE(!"Failed to getline from the stat file for a process.");
+        return FALSE;
+    }
+
+    unsigned long long starttime;
+
+    // According to `man proc`, the second field in the stat file is the filename of the executable,
+    // in parentheses. Tokenizing the stat file using spaces as separators breaks when that name
+    // has spaces in it, so we start using sscanf after skipping everything up to and including the
+    // last closing paren and the space after it.
+    char *scanStartPosition = strrchr(line, ')') + 2;
+
+    // All the format specifiers for the fields in the stat file are provided by 'man proc'.
+    int sscanfRet = sscanf(scanStartPosition, 
+        "%*c %*d %*d %*d %*d %*d %*u %*lu %*lu %*lu %*lu %*lu %*lu %*ld %*ld %*ld %*ld %*ld %*ld %llu \n",
+         &starttime);
+
+    if (sscanfRet != 1)
+    {
+        _ASSERTE(!"Failed to parse stat file contents with sscanf.");
+        return FALSE;
+    }
+
+    free(line);
+    fclose(statFile);
+
+    *disambiguationKey = starttime;
+    return TRUE;
+
+#else
+    // If this is not OS X and we don't have /proc, we just return FALSE.
+    WARN(!"GetProcessIdDisambiguationKey was called but is not implemented on this platform!");
+    return FALSE;
+#endif
 }
 
 /*++
@@ -2344,7 +2616,7 @@ CreateProcessModules(
 
 #if defined(__APPLE__)
 
-    // For OSx, the "vmmap" command outputs something similar to the /proc/*/maps file so popen the
+    // For OS X, the "vmmap" command outputs something similar to the /proc/*/maps file so popen the
     // command and read the relevant lines:
     //
     // ...
@@ -2374,7 +2646,7 @@ CreateProcessModules(
     ssize_t read;
 
     char vmmapCommand[100];
-    int chars = snprintf(vmmapCommand, sizeof(vmmapCommand), "/usr/bin/vmmap -interleaved %d", dwProcessId);
+    int chars = snprintf(vmmapCommand, sizeof(vmmapCommand), "/usr/bin/vmmap -interleaved %d -wide", dwProcessId);
     _ASSERTE(chars > 0 && chars <= sizeof(vmmapCommand));
 
     FILE *vmmapFile = popen(vmmapCommand, "r");
@@ -2537,7 +2809,7 @@ DestroyProcessModules(IN ProcessModules *listHead)
 
 /*++
 Function:
-  PROCShutdownProcess
+  PROCNotifyProcessShutdown
   
   Calls the abort handler to do any shutdown cleanup. Call be called 
   from the unhandled native exception handler.
@@ -2545,14 +2817,21 @@ Function:
 (no return value)
 --*/
 __attribute__((destructor)) 
-void PROCShutdownProcess()
+void PROCNotifyProcessShutdown()
 {
-    TRACE("PROCShutdownProcess %p\n", g_shutdownCallback.RawValue());
-
+    // Call back into the coreclr to clean up the debugger transport pipes
     PSHUTDOWN_CALLBACK callback = InterlockedExchangePointer(&g_shutdownCallback, NULL);
     if (callback != NULL)
     {
         callback();
+    }
+
+    // Cleanup the name continue semaphore on exit and abormal terminatation
+    sem_t *continueSem = InterlockedExchangePointer(&g_continueSem, SEM_FAILED);
+    if (continueSem != SEM_FAILED)
+    {
+        sem_close(continueSem);
+        sem_unlink(g_continueSemName);
     }
 }
 
@@ -2569,7 +2848,7 @@ PAL_NORETURN
 void
 PROCAbort()
 {
-    PROCShutdownProcess();
+    PROCNotifyProcessShutdown();
     abort();
 }
 
@@ -3214,7 +3493,7 @@ CorUnix::TerminateCurrentProcessNoExit(BOOL bTerminateUnconditionally)
     locked = PALInitLock();
     if(locked && PALIsInitialized())
     {
-        PROCShutdownProcess();
+        PROCNotifyProcessShutdown();
         PALCommonCleanup();
     }
 }
@@ -3454,7 +3733,7 @@ BOOL
 getFileName(
        LPCWSTR lpApplicationName,
        LPWSTR lpCommandLine,
-       char *lpPathFileName)
+       PathCharString& lpPathFileName)
 {
     LPWSTR lpEnd;
     WCHAR wcEnd;
@@ -3464,32 +3743,43 @@ getFileName(
 
     if (lpApplicationName)
     {
-        int path_size = MAX_LONGPATH;
-        lpTemp = lpPathFileName;
+        int length = WideCharToMultiByte(CP_ACP, 0, lpApplicationName, -1,
+                                            NULL, 0, NULL, NULL);
+
         /* if only a file name is specified, prefix it with "./" */
         if ((*lpApplicationName != '.') && (*lpApplicationName != '/') &&
             (*lpApplicationName != '\\'))
         {
-            if (strcpy_s(lpPathFileName, MAX_LONGPATH, "./") != SAFECRT_SUCCESS)
+            length += 2;
+            lpTemp = lpPathFileName.OpenStringBuffer(length);
+
+            if (strcpy_s(lpTemp, length, "./") != SAFECRT_SUCCESS)
             {
                 ERROR("strcpy_s failed!\n");
                 return FALSE;
             }
-
             lpTemp+=2;
-            path_size -= 2;
+
+       }
+       else
+       {
+            lpTemp = lpPathFileName.OpenStringBuffer(length);
        }
 
         /* Convert to ASCII */
-        if (!WideCharToMultiByte(CP_ACP, 0, lpApplicationName, -1,
-                                 lpTemp, path_size, NULL, NULL))
+        length = WideCharToMultiByte(CP_ACP, 0, lpApplicationName, -1,
+                                     lpTemp, length, NULL, NULL);
+        if (length == 0)
         {
+            lpPathFileName.CloseBuffer(0);
             ASSERT("WideCharToMultiByte failure\n");
             return FALSE;
         }
+        
+        lpPathFileName.CloseBuffer(length -1);
 
         /* Replace '\' by '/' */
-        FILEDosToUnixPathA(lpPathFileName);
+        FILEDosToUnixPathA(lpTemp);
 
         return TRUE;
     }
@@ -3557,14 +3847,14 @@ getFileName(
             return FALSE;
         }
 
-        lpFileNamePS.CloseBuffer(size);
+        lpFileNamePS.CloseBuffer(size - 1);
         /* restore last character */
         *lpEnd = wcEnd;
 
         /* Replace '\' by '/' */
         FILEDosToUnixPathA(lpFileName);
 
-        if (!getPath(lpFileName, MAX_LONGPATH, lpPathFileName))
+        if (!getPath(lpFileNamePS, lpPathFileName))
         {
             /* file is not in the path */
             return FALSE;
@@ -3698,7 +3988,7 @@ Determines if the passed in file is a managed executable
 --*/
 static
 int
-isManagedExecutable(LPSTR lpFileName)
+isManagedExecutable(LPCSTR lpFileName)
 {
     HANDLE hFile = INVALID_HANDLE_VALUE;
     DWORD cbRead;
@@ -3768,7 +4058,7 @@ Return:
 --*/
 static
 int
-checkFileType( char *lpFileName)
+checkFileType( LPCSTR lpFileName)
 { 
     struct stat stat_data;
 
@@ -3842,7 +4132,7 @@ static
 char **
 buildArgv(
       LPCWSTR lpCommandLine,
-      LPSTR lpAppPath,
+      PathCharString& lpAppPath,
       UINT *pnArg,
       BOOL prependLoader)
 {
@@ -3866,7 +4156,7 @@ buildArgv(
 
     pThread = InternalGetCurrentThread();
     /* make sure to allocate enough space, up for the worst case scenario */
-    int iLength = (iWlen + strlen(PROCESS_PELOADER_FILENAME) + strlen(lpAppPath) + 2);
+    int iLength = (iWlen + strlen(PROCESS_PELOADER_FILENAME) + lpAppPath.GetCount() + 2);
     lpAsciiCmdLine = (char *) InternalMalloc(iLength);
 
     if (lpAsciiCmdLine == NULL)
@@ -4124,7 +4414,6 @@ Abstract:
 
 Parameters:
     IN  lpFileName: file name to search in the path
-    IN  iLen: length of lpPathFileName buffer
     OUT lpPathFileName: returned string containing the path and the filename
 
 Return:
@@ -4134,9 +4423,8 @@ Return:
 static
 BOOL
 getPath(
-      LPCSTR lpFileName,
-      UINT iLen,
-      LPSTR  lpPathFileName)
+      PathCharString& lpFileNameString,
+      PathCharString& lpPathFileName)
 {
     LPSTR lpPath;
     LPSTR lpNext;
@@ -4146,15 +4434,16 @@ getPath(
     INT nextLen;
     INT slashLen;
     CPalThread *pThread = NULL;
+    LPCSTR lpFileName = lpFileNameString.GetString();
 
     /* if a path is specified, only look there */
     if(strchr(lpFileName, '/'))
     {
         if (access (lpFileName, F_OK) == 0)
         {
-            if (strcpy_s(lpPathFileName, iLen, lpFileName) != SAFECRT_SUCCESS)
+            if (!lpPathFileName.Set(lpFileNameString))
             {
-                TRACE("strcpy_s failed!\n");
+                TRACE("Set of StackString failed!\n");
                 return FALSE;
             }
 
@@ -4174,42 +4463,48 @@ getPath(
     if (lpwstr)
     {
         /* convert path to multibyte, check buffer size */
-        n = WideCharToMultiByte(CP_ACP, 0, lpwstr, -1, lpPathFileName, iLen,
+        n = WideCharToMultiByte(CP_ACP, 0, lpwstr, -1, NULL, 0,
             NULL, NULL);
+        
+        if (!lpPathFileName.Reserve(n + lpFileNameString.GetCount() + 1 ))
+        {
+            ERROR("StackString Reserve failed!\n");
+            return FALSE;
+        }
+
+        lpPath = lpPathFileName.OpenStringBuffer(n);
+
+        n = WideCharToMultiByte(CP_ACP, 0, lpwstr, -1, lpPath, n,
+            NULL, NULL);
+
         if (n == 0)
         {
+            lpPathFileName.CloseBuffer(0);
             ASSERT("WideCharToMultiByte failure!\n");
             return FALSE;
         }
+        
+        lpPathFileName.CloseBuffer(n - 1);
 
-        n += strlen(lpFileName) + 2;
-        if (n > (INT)iLen)
-        {
-            ERROR("Buffer too small for full path!\n");
-            return FALSE;
-        }
-
-        if ((strcat_s(lpPathFileName, iLen, "/") != SAFECRT_SUCCESS) ||
-            (strcat_s(lpPathFileName, iLen, lpFileName) != SAFECRT_SUCCESS))
-        {
-            ERROR("strcat_s failed!\n");
-            return FALSE;
-        }
+        lpPathFileName.Append("/", 1);
+        lpPathFileName.Append(lpFileNameString);
 
         if (access(lpPathFileName, F_OK) == 0)
         {
-            TRACE("found %s in application directory (%s)\n", lpFileName, lpPathFileName);
+            TRACE("found %s in application directory (%s)\n", lpFileName, lpPathFileName.GetString());
             return TRUE;
         }
     }
 
     /* then try the current directory */
-    if ((strcpy_s(lpPathFileName, iLen, "./") != SAFECRT_SUCCESS) ||
-        (strcat_s(lpPathFileName, iLen, lpFileName) != SAFECRT_SUCCESS))
+    if (!lpPathFileName.Reserve(lpFileNameString.GetCount()  + 2))
     {
-        ERROR("strcpy_s/strcat_s failed!\n");
+        ERROR("StackString Reserve failed!\n");
         return FALSE;
     }
+
+    lpPathFileName.Set("./", 2);
+    lpPathFileName.Append(lpFileNameString);
 
     if (access (lpPathFileName, R_OK) == 0)
     {
@@ -4218,19 +4513,13 @@ getPath(
     }
 
     pThread = InternalGetCurrentThread();
+
     /* Then try to look in the path */
-    int iLen2 = strlen(MiscGetenv("PATH"))+1;
-    lpPath = (LPSTR) InternalMalloc(iLen2);
+    lpPath = EnvironGetenv("PATH");
 
     if (!lpPath)
     {
-        ERROR("couldn't allocate memory for $PATH\n");
-        return FALSE;
-    }
-
-    if (strcpy_s(lpPath, iLen2, MiscGetenv("PATH")) != SAFECRT_SUCCESS)
-    {
-        ERROR("strcpy_s failed!");
+        ERROR("EnvironGetenv returned NULL for $PATH\n");
         return FALSE;
     }
 
@@ -4256,25 +4545,24 @@ getPath(
         nextLen = strlen(lpNext);
         slashLen = (lpNext[nextLen-1] == '/') ? 0:1;
 
-        /* verify if the path fit in the OUT parameter */
-        if (slashLen + nextLen + strlen (lpFileName) >= iLen)
+        if (!lpPathFileName.Reserve(nextLen + lpFileNameString.GetCount() + 1))
         {
             InternalFree(lpPath);
-            ERROR("buffer too small for full path\n");
+            ERROR("StackString ran out of memory for full path\n");
             return FALSE;
         }
-
-        strcpy_s (lpPathFileName, iLen, lpNext);
-
-        /* append a '/' if there's no '/' at the end of the path */
-        if ( slashLen == 1 )
-        {
-            strcat_s (lpPathFileName, iLen, "/");
-        }
         
-        strcat_s (lpPathFileName, iLen, lpFileName);
+        lpPathFileName.Set(lpNext, nextLen);
+            
+        if( slashLen == 1)
+        {
+            /* append a '/' if there's no '/' at the end of the path */
+            lpPathFileName.Append("/", 1);
+        }
 
-        if (access (lpPathFileName, F_OK) == 0)
+        lpPathFileName.Append(lpFileNameString);
+
+        if ( access (lpPathFileName, F_OK) == 0)
         {
             TRACE("Found %s in $PATH element %s\n", lpFileName, lpNext);
             InternalFree(lpPath);

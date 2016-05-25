@@ -166,8 +166,10 @@ namespace System.Threading.Tasks
 
         internal readonly Task m_parent; // A task's parent, or null if parent-less.
 
-
         internal volatile int m_stateFlags;
+
+        private Task ParentForDebugger => m_parent; // Private property used by a debugger to access this Task's parent
+        private int StateFlagsForDebugger => m_stateFlags; // Private property used by a debugger to access this Task's state flags
 
         // State constants for m_stateFlags;
         // The bits of m_stateFlags are allocated as follows:
@@ -3585,7 +3587,12 @@ namespace System.Threading.Tasks
             // Atomically store the fact that this task is completing.  From this point on, the adding of continuations will
             // result in the continuations being run/launched directly rather than being added to the continuation list.
             object continuationObject = Interlocked.Exchange(ref m_continuationObject, s_taskCompletionSentinel);
-            TplEtwProvider.Log.RunningContinuation(Id, continuationObject);
+            TplEtwProvider etw = TplEtwProvider.Log;
+            bool tplEtwProviderLoggingEnabled = etw.IsEnabled();
+            if (tplEtwProviderLoggingEnabled)
+            {
+                etw.RunningContinuation(Id, continuationObject);
+            }
 
             // If continuationObject == null, then we don't have any continuations to process
             if (continuationObject != null)
@@ -3658,7 +3665,10 @@ namespace System.Threading.Tasks
                     var tc = continuations[i] as StandardTaskContinuation;
                     if (tc != null && (tc.m_options & TaskContinuationOptions.ExecuteSynchronously) == 0)
                     {
-                        TplEtwProvider.Log.RunningContinuationList(Id, i, tc);
+                        if (tplEtwProviderLoggingEnabled)
+                        {
+                            etw.RunningContinuationList(Id, i, tc);
+                        }
                         continuations[i] = null; // so that we can skip this later
                         tc.Run(this, bCanInlineContinuations);
                     }
@@ -3672,7 +3682,10 @@ namespace System.Threading.Tasks
                     object currentContinuation = continuations[i];
                     if (currentContinuation == null) continue;
                     continuations[i] = null; // to enable free'ing up memory earlier
-                    TplEtwProvider.Log.RunningContinuationList(Id, i, currentContinuation);
+                    if (tplEtwProviderLoggingEnabled)
+                    {
+                        etw.RunningContinuationList(Id, i, currentContinuation);
+                    }
 
                     // If the continuation is an Action delegate, it came from an await continuation,
                     // and we should use AwaitTaskContinuation to run it.
@@ -5500,7 +5513,7 @@ namespace System.Threading.Tasks
             return signaledTaskIndex;
         }
 
-        #region FromResult / FromException / FromCancellation
+        #region FromResult / FromException / FromCanceled
 
         /// <summary>Creates a <see cref="Task{TResult}"/> that's completed successfully with the specified result.</summary>
         /// <typeparam name="TResult">The type of the result returned by the task.</typeparam>
@@ -5538,32 +5551,12 @@ namespace System.Threading.Tasks
         /// <summary>Creates a <see cref="Task"/> that's completed due to cancellation with the specified token.</summary>
         /// <param name="cancellationToken">The token with which to complete the task.</param>
         /// <returns>The canceled task.</returns>
-        [FriendAccessAllowed]
-        internal static Task FromCancellation(CancellationToken cancellationToken)
-        {
-            if (!cancellationToken.IsCancellationRequested) throw new ArgumentOutOfRangeException("cancellationToken");
-            Contract.EndContractBlock();
-            return new Task(true, TaskCreationOptions.None, cancellationToken);
-        }
-
-        /// <summary>Creates a <see cref="Task"/> that's completed due to cancellation with the specified token.</summary>
-        /// <param name="cancellationToken">The token with which to complete the task.</param>
-        /// <returns>The canceled task.</returns>
         public static Task FromCanceled(CancellationToken cancellationToken)
         {
-            return FromCancellation(cancellationToken);
-        }
-
-        /// <summary>Creates a <see cref="Task{TResult}"/> that's completed due to cancellation with the specified token.</summary>
-        /// <typeparam name="TResult">The type of the result returned by the task.</typeparam>
-        /// <param name="cancellationToken">The token with which to complete the task.</param>
-        /// <returns>The canceled task.</returns>
-        [FriendAccessAllowed]
-        internal static Task<TResult> FromCancellation<TResult>(CancellationToken cancellationToken)
-        {
-            if (!cancellationToken.IsCancellationRequested) throw new ArgumentOutOfRangeException("cancellationToken");
+            if (!cancellationToken.IsCancellationRequested)
+                throw new ArgumentOutOfRangeException("cancellationToken");
             Contract.EndContractBlock();
-            return new Task<TResult>(true, default(TResult), TaskCreationOptions.None, cancellationToken);
+            return new Task(true, TaskCreationOptions.None, cancellationToken);
         }
 
         /// <summary>Creates a <see cref="Task{TResult}"/> that's completed due to cancellation with the specified token.</summary>
@@ -5572,7 +5565,10 @@ namespace System.Threading.Tasks
         /// <returns>The canceled task.</returns>
         public static Task<TResult> FromCanceled<TResult>(CancellationToken cancellationToken)
         {
-            return FromCancellation<TResult>(cancellationToken);
+            if (!cancellationToken.IsCancellationRequested)
+                throw new ArgumentOutOfRangeException("cancellationToken");
+            Contract.EndContractBlock();
+            return new Task<TResult>(true, default(TResult), TaskCreationOptions.None, cancellationToken);
         }
 
         /// <summary>Creates a <see cref="Task{TResult}"/> that's completed due to cancellation with the specified exception.</summary>
@@ -5589,6 +5585,26 @@ namespace System.Threading.Tasks
             Contract.Assert(succeeded, "This should always succeed on a new task.");
             return task;
         }
+        
+        /// <summary>Creates a <see cref="Task"/> that's completed due to cancellation with the specified token.</summary>
+        /// <param name="cancellationToken">The token with which to complete the task.</param>
+        /// <returns>The canceled task.</returns>
+        [FriendAccessAllowed]
+        internal static Task FromCancellation(CancellationToken cancellationToken)
+        {
+            return FromCanceled(cancellationToken);
+        }
+        
+        /// <summary>Creates a <see cref="Task{TResult}"/> that's completed due to cancellation with the specified token.</summary>
+        /// <typeparam name="TResult">The type of the result returned by the task.</typeparam>
+        /// <param name="cancellationToken">The token with which to complete the task.</param>
+        /// <returns>The canceled task.</returns>
+        [FriendAccessAllowed]
+        internal static Task<TResult> FromCancellation<TResult>(CancellationToken cancellationToken)
+        {
+            return FromCanceled<TResult>(cancellationToken);
+        }
+        
         #endregion
 
         #region Run methods
@@ -5707,7 +5723,7 @@ namespace System.Threading.Tasks
 
             // Short-circuit if we are given a pre-canceled token
             if (cancellationToken.IsCancellationRequested)
-                return Task.FromCancellation(cancellationToken);
+                return Task.FromCanceled(cancellationToken);
 
             // Kick off initial Task, which will call the user-supplied function and yield a Task.
             Task<Task> task1 = Task<Task>.Factory.StartNew(function, cancellationToken, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
@@ -5758,7 +5774,7 @@ namespace System.Threading.Tasks
 
             // Short-circuit if we are given a pre-canceled token
             if (cancellationToken.IsCancellationRequested)
-                return Task.FromCancellation<TResult>(cancellationToken);
+                return Task.FromCanceled<TResult>(cancellationToken);
 
             // Kick off initial Task, which will call the user-supplied function and yield a Task.
             Task<Task<TResult>> task1 = Task<Task<TResult>>.Factory.StartNew(function, cancellationToken, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
@@ -5865,7 +5881,7 @@ namespace System.Threading.Tasks
             if (cancellationToken.IsCancellationRequested)
             {
                 // return a Task created as already-Canceled
-                return Task.FromCancellation(cancellationToken);
+                return Task.FromCanceled(cancellationToken);
             }
             else if (millisecondsDelay == 0)
             {

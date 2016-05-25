@@ -40,7 +40,9 @@ enum    ID_OPS
 IF_DEF(NONE,        IS_NONE,               NONE)     //
 
 IF_DEF(LABEL,       IS_NONE,               JMP )     // label
-IF_DEF(LARGEJMP,    IS_NONE,               JMP)      // large conditional branch pseudo-op
+IF_DEF(LARGEJMP,    IS_NONE,               JMP)      // large conditional branch pseudo-op (cond branch + uncond branch)
+IF_DEF(LARGEADR,    IS_NONE,               JMP)      // large address pseudo-op (adrp + add)
+IF_DEF(LARGELDC,    IS_NONE,               JMP)      // large constant pseudo-op (adrp + ldr)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -118,9 +120,10 @@ IF_DEF(BI_0B,       IS_NONE,               JMP)      // BI_0B   ......iiiiiiiiii
 IF_DEF(BI_0C,       IS_NONE,               CALL)     // BI_0C   ......iiiiiiiiii iiiiiiiiiiiiiiii               simm26:00   bl
 IF_DEF(BI_1A,       IS_NONE,               JMP)      // BI_1A   X.......iiiiiiii iiiiiiiiiiittttt      Rt       simm19:00   cbz cbnz
 IF_DEF(BI_1B,       IS_NONE,               JMP)      // BI_1B   B.......bbbbbiii iiiiiiiiiiittttt      Rt imm6  simm14:00   tbz tbnz
-IF_DEF(BR_1A,       IS_NONE,               CALL)     // BR_1A   ................ ......nnnnn.....         Rn                br blr ret
+IF_DEF(BR_1A,       IS_NONE,               CALL)     // BR_1A   ................ ......nnnnn.....         Rn                ret
+IF_DEF(BR_1B,       IS_NONE,               CALL)     // BR_1B   ................ ......nnnnn.....         Rn                br blr
 
-IF_DEF(LS_1A,       IS_NONE,               JMP)      // LS_1A   .X......iiiiiiii iiiiiiiiiiittttt      Rt    PC imm(1MB)
+IF_DEF(LS_1A,       IS_NONE,               JMP)      // LS_1A   XX...V..iiiiiiii iiiiiiiiiiittttt      Rt    PC imm(1MB)
 IF_DEF(LS_2A,       IS_NONE,               NONE)     // LS_2A   .X.......X...... ......nnnnnttttt      Rt Rn
 IF_DEF(LS_2B,       IS_NONE,               NONE)     // LS_2B   .X.......Xiiiiii iiiiiinnnnnttttt      Rt Rn    imm(0-4095)
 IF_DEF(LS_2C,       IS_NONE,               NONE)     // LS_2C   .X.......X.iiiii iiiiP.nnnnnttttt      Rt Rn    imm(-256..+255) pre/post inc

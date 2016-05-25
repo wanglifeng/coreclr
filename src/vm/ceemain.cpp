@@ -803,9 +803,6 @@ do { \
 #define IfFailGoLog(EXPR) IfFailGotoLog(EXPR, ErrExit)
 #endif
 
-void            jitOnDllProcessAttach();
-
-
 void EEStartupHelper(COINITIEE fFlags)
 {
     CONTRACTL
@@ -853,16 +850,6 @@ void EEStartupHelper(COINITIEE fFlags)
             IfFailGo(g_pConfig->SetupConfiguration());
 #endif // !FEATURE_CORECLR && !CROSSGEN_COMPILE
         }
-
-#ifdef CROSSGEN_COMPILE
-//ARM64TODO: Enable when jit is brought in
- #if defined(_TARGET_ARM64_)
-        //_ASSERTE(!"ARM64:NYI");    
-        
- #else
-        jitOnDllProcessAttach();
- #endif // defined(_TARGET_ARM64_)
-#endif
 
 #ifndef CROSSGEN_COMPILE
         // Initialize Numa and CPU group information
@@ -982,20 +969,15 @@ void EEStartupHelper(COINITIEE fFlags)
             ClrSleepEx(g_pConfig->StartupDelayMS(), FALSE);
         }
 #endif
-
+        
 #if USE_DISASSEMBLER
         if ((g_pConfig->GetGCStressLevel() & (EEConfig::GCSTRESS_INSTR_JIT | EEConfig::GCSTRESS_INSTR_NGEN)) != 0)
         {
             Disassembler::StaticInitialize();
             if (!Disassembler::IsAvailable())
             {
-#ifdef HAVE_GCCOVER
-#ifdef _DEBUG
-                printf("External disassembler is not available. Disabling GCStress for GCSTRESS_INSTR_JIT and GCSTRESS_INSTR_NGEN.\n");
-#endif // _DEBUG
-                g_pConfig->SetGCStressLevel(
-                    g_pConfig->GetGCStressLevel() & ~(EEConfig::GCSTRESS_INSTR_JIT | EEConfig::GCSTRESS_INSTR_NGEN));
-#endif // HAVE_GCCOVER
+                fprintf(stderr, "External disassembler is not available.\n");
+                IfFailGo(E_FAIL);
             }
         }
 #endif // USE_DISASSEMBLER
@@ -1444,11 +1426,11 @@ HRESULT EEStartup(COINITIEE fFlags)
     PAL_TRY(COINITIEE *, pfFlags, &fFlags)
     {
 #ifndef CROSSGEN_COMPILE
-#ifdef FEATURE_PAL
-        DacGlobals::Initialize();
-        InitializeJITNotificationTable();
-#endif
         InitializeClrNotifications();
+#ifdef FEATURE_PAL
+        InitializeJITNotificationTable();
+        DacGlobals::Initialize();
+#endif
 #endif // CROSSGEN_COMPILE
 
         EEStartupHelper(*pfFlags);
@@ -1974,12 +1956,6 @@ void STDMETHODCALLTYPE EEShutDownHelper(BOOL fIsDllUnloading)
 #endif // FEATURE_INTERPRETER
         
         FastInterlockExchange((LONG*)&g_fForbidEnterEE, TRUE);
-
-#if defined(DEBUGGING_SUPPORTED) && defined(FEATURE_PAL)
-        // Terminate the debugging services in the first phase for PAL based platforms
-        // because EEDllMain's DLL_PROCESS_DETACH is NOT going to be called.
-        TerminateDebugger();
-#endif // DEBUGGING_SUPPORTED && FEATURE_PAL
 
         if (g_fProcessDetach)
         {
@@ -2978,9 +2954,9 @@ static BOOL CacheCommandLine(__in LPWSTR pCmdLine, __in_opt LPWSTR* ArgvW)
     }
 
     if (ArgvW != NULL && ArgvW[0] != NULL) {
-        WCHAR wszModuleName[MAX_LONGPATH];
-        WCHAR wszCurDir[MAX_LONGPATH];
-        if (!WszGetCurrentDirectory(MAX_LONGPATH, wszCurDir))
+        PathString wszModuleName;
+        PathString wszCurDir;
+        if (!WszGetCurrentDirectory(wszCurDir))
             return FALSE;
 
 #ifdef _PREFAST_
@@ -2991,17 +2967,17 @@ static BOOL CacheCommandLine(__in LPWSTR pCmdLine, __in_opt LPWSTR* ArgvW)
         // usage of PathCombine is safe if we ensure that buffer specified by
         // parameter1 can accomodate buffers specified by paramater2, parameter3
         // and one path separator
-        if (lstrlenW(wszCurDir) + lstrlenW(ArgvW[0]) + 1 >= COUNTOF(wszModuleName))
-            return FALSE;
+        COUNT_T wszModuleName_len = wszCurDir.GetCount() + lstrlenW(ArgvW[0]);
+        WCHAR* wszModuleName_buf = wszModuleName.OpenUnicodeBuffer(wszModuleName_len);
 
-        if (PathCombine(wszModuleName, wszCurDir, ArgvW[0]) == NULL)
+        if (PathCombine(wszModuleName_buf, wszCurDir, ArgvW[0]) == NULL)
             return FALSE;
-
+        wszModuleName.CloseBuffer();
 #ifdef _PREFAST_
 #pragma warning(pop)
 #endif
 
-        size_t len = wcslen(wszModuleName);
+        size_t len = wszModuleName.GetCount();
         _ASSERT(g_pCachedModuleFileName== NULL);
         g_pCachedModuleFileName = new WCHAR[len+1];
         wcscpy_s(g_pCachedModuleFileName, len+1, wszModuleName);
@@ -3011,7 +2987,7 @@ static BOOL CacheCommandLine(__in LPWSTR pCmdLine, __in_opt LPWSTR* ArgvW)
 }
 
 //*****************************************************************************
-// This entry point is called from the native entry piont of the loaded
+// This entry point is called from the native entry point of the loaded
 // executable image.  The command line arguments and other entry point data
 // will be gathered here.  The entry point for the user image will be found
 // and handled accordingly.
@@ -3824,7 +3800,7 @@ BOOL STDMETHODCALLTYPE EEDllMain( // TRUE on success, FALSE on error.
                 CoreClrCallbacks cccallbacks;
                 cccallbacks.m_hmodCoreCLR               = (HINSTANCE)g_pMSCorEE;
                 cccallbacks.m_pfnIEE                    = IEE;
-                cccallbacks.m_pfnGetCORSystemDirectory  = GetCORSystemDirectoryInternal;
+                cccallbacks.m_pfnGetCORSystemDirectory  = GetCORSystemDirectoryInternaL;
                 cccallbacks.m_pfnGetCLRFunction         = GetCLRFunction;
 
                 InitUtilcode(cccallbacks);
@@ -4212,12 +4188,7 @@ static void TerminateDebugger(void)
 
         // This will kill the helper thread, delete the Debugger object, and free all resources.
         g_pDebugInterface->StopDebugger();
-        g_pDebugInterface = NULL;
     }
-
-    // Delete this after Debugger, since Debugger may use this.
-    EEDbgInterfaceImpl::Terminate();
-    _ASSERTE(g_pEEDbgInterfaceImpl == NULL); // Terminate nulls this out for us.
 
     g_CORDebuggerControlFlags = DBCF_NORMAL_OPERATION;
 
@@ -4279,29 +4250,46 @@ static HRESULT InitializeIPCManager(void)
     {
         // We failed to create the IPC block because it has already been created. This means that
         // two mscoree's have been loaded into the process.
-        WCHAR strFirstModule[256];
-        WCHAR strSecondModule[256];
+        PathString strFirstModule;
+        PathString strSecondModule;
+        EX_TRY
+        {
+            // Get the name and path of the first loaded MSCOREE.DLL.
+            if (!hInstIPCBlockOwner || !WszGetModuleFileName(hInstIPCBlockOwner, strFirstModule))
+                strFirstModule.Set(W("<Unknown>"));
 
-        // Get the name and path of the first loaded MSCOREE.DLL.
-        if (!hInstIPCBlockOwner || !WszGetModuleFileName(hInstIPCBlockOwner, strFirstModule, 256))
-            wcscpy_s(strFirstModule, COUNTOF(strFirstModule), W("<Unknown>"));
-
-        // Get the name and path of the second loaded MSCOREE.DLL.
-        if (!WszGetModuleFileName(g_pMSCorEE, strSecondModule, 256))
-            wcscpy_s(strSecondModule, COUNTOF(strSecondModule), W("<Unknown>"));
-
+            // Get the name and path of the second loaded MSCOREE.DLL.
+            if (!WszGetModuleFileName(g_pMSCorEE, strSecondModule))
+               strSecondModule.Set(W("<Unknown>"));
+        }
+        EX_CATCH_HRESULT(hr);
         // Load the format strings for the title and the message body.
         EEMessageBoxCatastrophic(IDS_EE_TWO_LOADED_MSCOREE_MSG, IDS_EE_TWO_LOADED_MSCOREE_TITLE, strFirstModule, strSecondModule);
         goto errExit;
     }
     else
     {
-        if (!WszGetModuleFileName(GetModuleInst(), (PWSTR)
-                                  g_pIPCManagerInterface->
-                                  GetInstancePath(),
-                                  MAX_LONGPATH))
+        PathString temp;
+        if (!WszGetModuleFileName(GetModuleInst(),
+                                  temp
+                                  ))
         {
             hr = HRESULT_FROM_GetLastErrorNA();
+        }
+        else
+        {
+            EX_TRY
+            {
+                if (temp.GetCount() + 1 > MAX_LONGPATH)
+                {
+                    hr = E_FAIL;
+                }
+                else
+                {
+                    wcscpy_s((PWSTR)g_pIPCManagerInterface->GetInstancePath(),temp.GetCount() + 1,temp);
+                }
+            }
+            EX_CATCH_HRESULT(hr);
         }
     }
 
@@ -4915,11 +4903,12 @@ HRESULT CorCommandLine::ReadClickOnceEnvVariables()
     EX_TRY
     {
         // Find out if this is a ClickOnce application being activated.
-        DWORD cAppFullName = WszGetEnvironmentVariable(g_pwzClickOnceEnv_FullName, NULL, 0);
+        PathString m_pwszAppFullNameHolder;
+        DWORD cAppFullName = WszGetEnvironmentVariable(g_pwzClickOnceEnv_FullName, m_pwszAppFullNameHolder);
         if (cAppFullName > 0) {
             // get the application full name.
-            m_pwszAppFullName = new WCHAR[cAppFullName];
-            WszGetEnvironmentVariable(g_pwzClickOnceEnv_FullName, m_pwszAppFullName, cAppFullName);
+            m_pwszAppFullName = m_pwszAppFullNameHolder.GetCopyOfUnicodeString();
+                       
             // reset the variable now that we read it so child processes
             // do not think they are a clickonce app.
             WszSetEnvironmentVariable(g_pwzClickOnceEnv_FullName, NULL);
@@ -4933,7 +4922,8 @@ HRESULT CorCommandLine::ReadClickOnceEnvVariables()
                 _itow_s(dwManifestPaths, buf.OpenUnicodeBuffer(size), size, 10);
                 buf.CloseBuffer();
                 manifestFile.Append(buf);
-                if (WszGetEnvironmentVariable(manifestFile.GetUnicode(), NULL, 0) > 0)
+                SString temp;
+                if (WszGetEnvironmentVariable(manifestFile.GetUnicode(), temp) > 0)
                     dwManifestPaths++;
                 else
                     break;
@@ -4946,10 +4936,11 @@ HRESULT CorCommandLine::ReadClickOnceEnvVariables()
                 _itow_s(i, buf.OpenUnicodeBuffer(size), size, 10);
                 buf.CloseBuffer();
                 manifestFile.Append(buf);
-                DWORD cManifestPath = WszGetEnvironmentVariable(manifestFile.GetUnicode(), NULL, 0);
+                PathString m_ppwszManifestPathsHolder;
+                DWORD cManifestPath = WszGetEnvironmentVariable(manifestFile.GetUnicode(), m_ppwszManifestPathsHolder);
                 if (cManifestPath > 0) {
-                    m_ppwszManifestPaths[i] = new WCHAR[cManifestPath];
-                    WszGetEnvironmentVariable(manifestFile.GetUnicode(), m_ppwszManifestPaths[i], cManifestPath);
+                    
+                    m_ppwszManifestPaths[i] = m_ppwszManifestPathsHolder.GetCopyOfUnicodeString();
                     WszSetEnvironmentVariable(manifestFile.GetUnicode(), NULL); // reset the env. variable.
                 }
             }
@@ -4964,7 +4955,8 @@ HRESULT CorCommandLine::ReadClickOnceEnvVariables()
                 _itow_s(dwActivationData, buf.OpenUnicodeBuffer(size), size, 10);
                 buf.CloseBuffer();
                 activationData.Append(buf);
-                if (WszGetEnvironmentVariable(activationData.GetUnicode(), NULL, 0) > 0)
+                SString temp;
+                if (WszGetEnvironmentVariable(activationData.GetUnicode(), temp) > 0)
                     dwActivationData++;
                 else
                     break;
@@ -4977,10 +4969,10 @@ HRESULT CorCommandLine::ReadClickOnceEnvVariables()
                 _itow_s(i, buf.OpenUnicodeBuffer(size), size, 10);
                 buf.CloseBuffer();
                 activationData.Append(buf);
-                DWORD cActivationData = WszGetEnvironmentVariable(activationData.GetUnicode(), NULL, 0);
+                PathString m_ppwszActivationDataHolder;
+                DWORD cActivationData = WszGetEnvironmentVariable(activationData.GetUnicode(), m_ppwszActivationDataHolder);
                 if (cActivationData > 0) {
-                    m_ppwszActivationData[i] = new WCHAR[cActivationData];
-                    WszGetEnvironmentVariable(activationData.GetUnicode(), m_ppwszActivationData[i], cActivationData);
+                    m_ppwszActivationData[i] = m_ppwszActivationDataHolder.GetCopyOfUnicodeString();
                     WszSetEnvironmentVariable(activationData.GetUnicode(), NULL); // reset the env. variable.
                 }
             }

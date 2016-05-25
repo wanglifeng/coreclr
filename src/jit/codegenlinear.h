@@ -41,9 +41,9 @@
     void                genPutArgStk(GenTreePtr treeNode);
     unsigned            getBaseVarForPutArgStk(GenTreePtr treeNode);
 
-#ifdef _TARGET_XARCH_
+#if defined(_TARGET_XARCH_) || defined(_TARGET_ARM64_)
     unsigned            getFirstArgWithStackSlot();
-#endif // !_TARGET_XARCH_
+#endif // _TARGET_XARCH_ || _TARGET_ARM64_
 
     void                genCompareFloat(GenTreePtr treeNode);
 
@@ -53,13 +53,17 @@
     void                genCompareLong(GenTreePtr treeNode);
 #endif
 
-#ifdef _TARGET_ARM64_
-    void                genCodeForLdObj(GenTreeOp* treeNode);
-#endif
-
 #ifdef FEATURE_SIMD
+    enum SIMDScalarMoveType
+    {
+        SMT_ZeroInitUpper,                  // zero initlaize target upper bits
+        SMT_ZeroInitUpper_SrcHasUpperZeros, // zero initialize target upper bits; source upper bits are known to be zero
+        SMT_PreserveUpper                   // preserve target upper bits
+    };
+
     instruction         getOpForSIMDIntrinsic(SIMDIntrinsicID intrinsicId, var_types baseType, unsigned *ival = nullptr);
-    void                genSIMDScalarMove(var_types type, regNumber target, regNumber src, bool zeroInit);
+    void                genSIMDScalarMove(var_types type, regNumber target, regNumber src, SIMDScalarMoveType moveType);
+    void                genSIMDZero(var_types targetType, var_types baseType, regNumber targetReg);
     void                genSIMDIntrinsicInit(GenTreeSIMD* simdNode);
     void                genSIMDIntrinsicInitN(GenTreeSIMD* simdNode);
     void                genSIMDIntrinsicInitArray(GenTreeSIMD* simdNode);
@@ -134,9 +138,11 @@
                                              var_types      type  = TYP_INT,
                                              insFlags       flags = INS_FLAGS_DONT_CARE);
 
-    void                genCodeForShift     (GenTreePtr dst,
-                                             GenTreePtr src,
-                                             GenTreePtr treeNode);
+    void                genCodeForShift          (GenTreePtr tree);
+
+#ifdef _TARGET_XARCH_
+    void                genCodeForShiftRMW       (GenTreeStoreInd* storeInd);
+#endif // _TARGET_XARCH_
 
     void                genCodeForCpObj          (GenTreeCpObj* cpObjNode);
 
@@ -181,7 +187,7 @@
     
     void                genJmpMethod(GenTreePtr jmp);
 
-    bool                genStoreRegisterReturnInLclVar(GenTreePtr treeNode);
+    void                genMultiRegCallStoreToLocal(GenTreePtr treeNode);
 
     // Deals with codegen for muti-register struct returns.
     bool                isStructReturn(GenTreePtr treeNode);
@@ -189,19 +195,6 @@
 
     // Codegen for GT_RETURN.
     void                genReturn(GenTreePtr treeNode);
-
-#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
-    void                getStructTypeOffset(const SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR& structDesc,
-                                            var_types* type0,
-                                            var_types* type1,
-                                            unsigned __int8* offset0,
-                                            unsigned __int8* offset1);
-
-    void                getStructReturnRegisters(var_types type0,
-                                                 var_types type1,
-                                                 regNumber* retRegPtr0,
-                                                 regNumber* retRegPtr1);
-#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
 
     void                genLclHeap(GenTreePtr tree);
 

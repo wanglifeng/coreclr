@@ -81,7 +81,14 @@ HRESULT STDMETHODCALLTYPE
 DataTarget::GetPointerSize(
     /* [out] */ ULONG32 *size)
 {
+#if defined(SOS_TARGET_AMD64) || defined(SOS_TARGET_ARM64)
     *size = 8;
+#elif defined(SOS_TARGET_ARM)
+    *size = 4;
+#elif
+  #error Unsupported architecture
+#endif
+
     return S_OK;
 }
 
@@ -200,9 +207,9 @@ DataTarget::VirtualUnwind(
     /* [in] */ ULONG32 contextSize,
     /* [in, out, size_is(contextSize)] */ PBYTE context)
 {
-    if (g_ExtClient == NULL)
+    if (g_ExtServices == NULL)
     {
         return E_UNEXPECTED;
     }
-    return g_ExtClient->VirtualUnwind(threadId, contextSize, context);
+    return g_ExtServices->VirtualUnwind(threadId, contextSize, context);
 }

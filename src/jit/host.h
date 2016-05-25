@@ -9,26 +9,26 @@
 #define printf logf
 #endif
 
+#ifndef fprintf
+#define fprintf flogf
+#endif
+
 class Compiler;
-class LogEnv {
+class LogEnv
+{
 public:
     LogEnv(ICorJitInfo* aCompHnd);
-    ~LogEnv();
-    static LogEnv* cur();           // get current logging environement
-    static void cleanup();          // clean up cached information (TLS ID)
     void setCompiler(Compiler* val) { const_cast<Compiler*&>(compiler) = val; }
 
     ICorJitInfo* const compHnd;
     Compiler* const compiler;
-private:
-    static int tlsID;
-    LogEnv* next;
 };
 
 BOOL vlogf(unsigned level, const char* fmt, va_list args);
+int vflogf(FILE* file, const char* fmt, va_list args);
 
-int logf_stdout(const char* fmt, va_list args);
-int logf(const char*, ...);
+int logf(const char* fmt, ...);
+int flogf(FILE* file, const char* fmt, ...);
 void gcDump_logf(const char* fmt, ...);
 
 void logf(unsigned level, const char* fmt, ...);
@@ -37,13 +37,7 @@ extern  "C"
 void    __cdecl     assertAbort(const char *why, const char *file, unsigned line);
 
 #undef  assert
-// TODO-ARM64-NYI: Temporarily make all asserts in the JIT use the NYI code path
-#ifdef _TARGET_ARM64_
-extern void notYetImplemented(const char * msg, const char * file, unsigned line);
-#define assert(p)   (void)((p) || (notYetImplemented("assert: " #p, __FILE__, __LINE__),0))
-#else
 #define assert(p)   (void)((p) || (assertAbort(#p, __FILE__, __LINE__),0))
-#endif
 
 #else // DEBUG
 
@@ -57,6 +51,12 @@ extern void notYetImplemented(const char * msg, const char * file, unsigned line
 /*****************************************************************************/
 
 const   size_t      OS_page_size = (4*1024);
+
+extern FILE* jitstdout;
+
+inline FILE* procstdout() { return stdout; }
+#undef stdout
+#define stdout use_jitstdout
 
 /*****************************************************************************/
 #endif

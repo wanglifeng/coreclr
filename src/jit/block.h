@@ -147,37 +147,6 @@ struct EntryState
     StackEntry*     esStack;                    // ptr to  stack
 };
 
-
-//-----------------------------------------------------------------------------
-//
-//  The following keeps track of the currently expanded inline functions.
-//  Any method currently on the list should not be inlined since that
-//  implies that it's being called recursively.
-//  We track the IL code body so we don't get confused by generics.
-//
-
-struct inlExpLst
-{
-   // Default constructor, suitable for root instance
-   inlExpLst();
-
-   inlExpLst*      ixlParent;    // logical caller (parent)
-   inlExpLst*      ixlChild;     // first child
-   inlExpLst*      ixlSibling;   // next child of the parent
-   IL_OFFSETX      ilOffset;     // call site location within parent
-   BYTE*           ixlCode;      // address of IL buffer for the method
-
-#ifdef DEBUG
-   const char *    methodName;
-   unsigned        depth;
-
-   // Dump this entry and all descendants
-   void Dump(int indent = 0);
-#endif
-};
-
-typedef inlExpLst* inlExpPtr;
-
 // This encapsulates the "exception handling" successors of a block.  That is,
 // if a basic block BB1 occurs in a try block, we consider the first basic block
 // BB2 of the corresponding handler to be an "EH successor" of BB1.  Because we
@@ -956,14 +925,12 @@ typedef unsigned weight_t;             // Type used to hold block and edge weigh
 
     bool endsWithJmpMethod(Compiler *comp);
 
-#if FEATURE_FASTTAILCALL
     bool endsWithTailCall(Compiler* comp, bool fastTailCallsOnly, bool tailCallsConvertibleToLoopOnly, GenTree** tailCall);
 
     bool endsWithTailCallOrJmp(Compiler *comp, 
                                bool fastTailCallsOnly = false);
 
     bool endsWithTailCallConvertibleToLoop(Compiler *comp, GenTree** tailCall);
-#endif // FEATURE_FASTTAILCALL
 
 #if JIT_FEATURE_SSA_SKIP_DEFS
     // Returns the first statement in the statement list of "this" that is
@@ -1040,13 +1007,13 @@ public:
 };
 
 // A set of blocks.
-typedef SimplerHashTable<BasicBlock*, PtrKeyFuncs<BasicBlock>, bool, DefaultSimplerHashBehavior> BlkSet;
+typedef SimplerHashTable<BasicBlock*, PtrKeyFuncs<BasicBlock>, bool, JitSimplerHashBehavior> BlkSet;
 
 // A map of block -> set of blocks, can be used as sparse block trees.
-typedef SimplerHashTable<BasicBlock*, PtrKeyFuncs<BasicBlock>, BlkSet*, DefaultSimplerHashBehavior> BlkToBlkSetMap;
+typedef SimplerHashTable<BasicBlock*, PtrKeyFuncs<BasicBlock>, BlkSet*, JitSimplerHashBehavior> BlkToBlkSetMap;
 
 // Map from Block to Block.  Used for a variety of purposes.
-typedef SimplerHashTable<BasicBlock*, PtrKeyFuncs<BasicBlock>, BasicBlock*, DefaultSimplerHashBehavior> BlockToBlockMap;
+typedef SimplerHashTable<BasicBlock*, PtrKeyFuncs<BasicBlock>, BasicBlock*, JitSimplerHashBehavior> BlockToBlockMap;
 
 // In compiler terminology the control flow between two BasicBlocks
 // is typically referred to as an "edge".  Most well known are the
@@ -1138,6 +1105,50 @@ struct flowList
         , flEdgeWeightMin(0)
         , flEdgeWeightMax(0)
         , flDupCount(0)
+    {}
+};
+
+// This enum represents a pre/post-visit action state to emulate a depth-first
+// spanning tree traversal of a tree or graph.
+enum DfsStackState
+{
+    DSS_Invalid,      // The initialized, invalid error state
+    DSS_Pre,          // The DFS pre-order (first visit) traversal state
+    DSS_Post          // The DFS post-order (last visit) traversal state
+};
+
+// These structs represents an entry in a stack used to emulate a non-recursive
+// depth-first spanning tree traversal of a graph. The entry contains either a
+// block pointer or a block number depending on which is more useful.
+struct DfsBlockEntry
+{
+    DfsStackState       dfsStackState;  // The pre/post traversal action for this entry
+    BasicBlock*         dfsBlock;       // The corresponding block for the action
+
+    DfsBlockEntry()
+        : dfsStackState(DSS_Invalid)
+        , dfsBlock(nullptr)
+    {}
+
+    DfsBlockEntry(DfsStackState state, BasicBlock* basicBlock)
+        : dfsStackState(state)
+        , dfsBlock(basicBlock)
+    {}
+};
+
+struct DfsNumEntry
+{
+    DfsStackState       dfsStackState;  // The pre/post traversal action for this entry
+    unsigned            dfsNum;         // The corresponding block number for the action
+
+    DfsNumEntry()
+        : dfsStackState(DSS_Invalid)
+        , dfsNum(0)
+    {}
+
+    DfsNumEntry(DfsStackState state, unsigned bbNum)
+        : dfsStackState(state)
+        , dfsNum(bbNum)
     {}
 };
 

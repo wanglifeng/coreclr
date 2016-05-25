@@ -983,6 +983,7 @@ Debugger::Debugger()
 
     m_fShutdownMode = false;
     m_fDisabled = false;
+    m_rgHijackFunction = NULL;
 
 #ifdef _DEBUG
     InitDebugEventCounting();
@@ -2244,9 +2245,9 @@ HRESULT Debugger::StartupPhase2(Thread * pThread)
     if (!CORDebuggerAttached())
     {
         #define DBG_ATTACH_ON_STARTUP_ENV_VAR W("COMPlus_DbgAttachOnStartup")
-
+        PathString temp;
         // We explicitly just check the env because we don't want a switch this invasive to be global.
-        DWORD fAttach = WszGetEnvironmentVariable(DBG_ATTACH_ON_STARTUP_ENV_VAR, NULL, 0) > 0;
+        DWORD fAttach = WszGetEnvironmentVariable(DBG_ATTACH_ON_STARTUP_ENV_VAR, temp) > 0;
 
         if (fAttach)
         {
@@ -10585,64 +10586,6 @@ BYTE* Debugger::SerializeModuleMetaData(Module * pModule, DWORD * countBytes)
     return metadataBuffer;
 }
 
-#ifdef FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
-//---------------------------------------------------------------------------------------
-//
-// Called on the helper thread to send a pause notification to the host
-//
-//
-//    This is called on the helper-thread, or a thread pretending to be the helper-thread.
-//    The debuggee should be synchronized. This callback to the host is only supported
-//    on Windows Phone as a replacement for some legacy NetCF behavior. In general I don't
-//    like being the transport between the VS debugger and the host, so don't use
-//    this as precedent that we should start making more callbacks for them. In the future
-//    the debugger and host should make alternative arrangements such as window messages,
-//    out of proc event signaling, or any other IPC mechanism.
-//
-//    This should be deprecated as soon as mixed-mode debugging is available. The 
-//    end goal on phone is to pause the UI thread while VS is in the break state. That
-//    will be accomplished by a mixed-mode debugger suspending all native threads when
-//    it breaks rather than having us send a special message.
-//
-//---------------------------------------------------------------------------------------
-VOID Debugger::InvokeLegacyNetCFHostPauseCallback()
-{
-    IHostNetCFDebugControlManager* pHostCallback = CorHost2::GetHostNetCFDebugControlManager();
-    if(pHostCallback != NULL)
-    {
-        pHostCallback->NotifyPause(0);
-    }
-}
-
-//---------------------------------------------------------------------------------------
-//
-// Called on the helper thread to send a resume notification to the host
-//
-//
-//    This is called on the helper-thread, or a thread pretending to be the helper-thread.
-//    The debuggee should be synchronized. This callback to the host is only supported
-//    on Windows Phone as a replacement for some legacy NetCF behavior. In general I don't
-//    like being the transport between the VS debugger and the host, so don't use
-//    this as precedent that we should start making more callbacks for them. In the future
-//    the debugger and host should make alternative arrangements such as window messages,
-//    out of proc event signaling, or any other IPC mechanism.
-//
-//    This should be deprecated as soon as mixed-mode debugging is available. The 
-//    end goal on phone is to pause the UI thread while VS is in the break state. That
-//    will be accomplished by a mixed-mode debugger suspending all native threads when
-//    it breaks rather than having us send a special message.
-//
-//---------------------------------------------------------------------------------------
-VOID Debugger::InvokeLegacyNetCFHostResumeCallback()
-{
-    IHostNetCFDebugControlManager* pHostCallback = CorHost2::GetHostNetCFDebugControlManager();
-    if(pHostCallback != NULL)
-    {
-        pHostCallback->NotifyResume(0);
-    }
-}
-#endif //FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
-
 //---------------------------------------------------------------------------------------
 //
 // Handle an IPC event from the Debugger.
@@ -11715,34 +11658,6 @@ bool Debugger::HandleIPCEvent(DebuggerIPCEvent * pEvent)
         }
 
         break;
-
-#ifdef FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
-    case DB_IPCE_NETCF_HOST_CONTROL_PAUSE:
-        {
-            LOG((LF_CORDB, LL_INFO10000, "D::HIPCE Handling DB_IPCE_NETCF_HOST_CONTROL_PAUSE\n"));
-            InvokeLegacyNetCFHostPauseCallback();
-
-            DebuggerIPCEvent * pResult = m_pRCThread->GetIPCEventReceiveBuffer();
-            InitIPCEvent(pResult, DB_IPCE_NETCF_HOST_CONTROL_PAUSE_RESULT, NULL, NULL);
-            pResult->hr = S_OK;
-            m_pRCThread->SendIPCReply();
-        }
-
-        break;
-
-    case DB_IPCE_NETCF_HOST_CONTROL_RESUME:
-        {
-            LOG((LF_CORDB, LL_INFO10000, "D::HIPCE Handling DB_IPCE_NETCF_HOST_CONTROL_RESUME\n"));
-            InvokeLegacyNetCFHostResumeCallback();
-
-            DebuggerIPCEvent * pResult = m_pRCThread->GetIPCEventReceiveBuffer();
-            InitIPCEvent(pResult, DB_IPCE_NETCF_HOST_CONTROL_RESUME_RESULT, NULL, NULL);
-            pResult->hr = S_OK;
-            m_pRCThread->SendIPCReply();
-        }
-
-        break;
-#endif // FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
 
     default:
         // We should never get an event that we don't know about.
@@ -13587,7 +13502,17 @@ ExceptionHijackPersonalityRoutine(IN     PEXCEPTION_RECORD   pExceptionRecord
     CONTEXT * pHijackContext = NULL;
 
     // Get the 1st parameter (the Context) from hijack worker.
-    pHijackContext = *reinterpret_cast<CONTEXT **>(pDispatcherContext->EstablisherFrame);
+    // EstablisherFrame points to the stack slot 8 bytes above the
+    // return address to the ExceptionHijack. This would contain the
+    // parameters passed to ExceptionHijackWorker, which is marked
+    // STDCALL, but the x64 calling convention lets the
+    // ExceptionHijackWorker use that stack space, resulting in the
+    // context being overwritten. Instead, we get the context from the
+    // previous stack frame, which contains the arguments to
+    // ExceptionHijack, placed there by the debugger in
+    // DacDbiInterfaceImpl::Hijack. This works because ExceptionHijack
+    // allocates exactly 4 stack slots.
+    pHijackContext = *reinterpret_cast<CONTEXT **>(pDispatcherContext->EstablisherFrame + 0x20);
     
     // This copies pHijackContext into pDispatcherContext, which the OS can then
     // use to walk the stack.
@@ -15166,8 +15091,7 @@ HRESULT Debugger::InitAppDomainIPC(void)
     } hEnsureCleanup(this);
 
     DWORD dwStrLen = 0;
-    SString szExeNamePathString;
-    WCHAR * szExeName = szExeNamePathString.OpenUnicodeBuffer(MAX_LONGPATH);
+    SString szExeName;
     int i;
 
     // all fields in the object can be zero initialized.
@@ -15216,15 +15140,14 @@ HRESULT Debugger::InitAppDomainIPC(void)
 
     // also initialize the process name
     dwStrLen = WszGetModuleFileName(NULL,
-                                    szExeName,
-                                    MAX_LONGPATH);
+                                    szExeName);
 
-    szExeNamePathString.CloseBuffer(dwStrLen);
+    
     // If we couldn't get the name, then use a nice default.
     if (dwStrLen == 0)
     {
-        wcscpy_s(szExeName, COUNTOF(szExeName), W("<NoProcessName>"));
-        dwStrLen = (DWORD)wcslen(szExeName);
+        szExeName.Set(W("<NoProcessName>"));
+        dwStrLen = szExeName.GetCount();
     }
 
     // If we got the name, copy it into a buffer. dwStrLen is the
@@ -17094,6 +17017,7 @@ Debugger::EnumMemoryRegions(CLRDataEnumMemoryFlags flags)
 {
     DAC_ENUM_VTHIS();
     SUPPORTS_DAC;
+    _ASSERTE(m_rgHijackFunction != NULL);
 
     if ( flags != CLRDATA_ENUM_MEM_TRIAGE)
     {

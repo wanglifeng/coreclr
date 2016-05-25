@@ -4869,7 +4869,7 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
             PCWSTR szDtraceOutput1=W(""),szDtraceOutput2=W("");
             UINT8 startupMode = 0;
             UINT startupFlags = 0;
-            WCHAR dllPath[MAX_LONGPATH+1] = {0};
+            PathString dllPath;
             UINT8 Sku = 0;
             _ASSERTE(g_fEEManagedEXEStartup ||   //CLR started due to a managed exe
                 g_fEEIJWStartup ||               //CLR started as a mixed mode Assembly
@@ -4899,7 +4899,7 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
             LPCGUID comGUID=&g_EEComObjectGuid;
 
             PCWSTR lpwszCommandLine = W("");
-            PCWSTR lpwszRuntimeDllPath = (PCWSTR)dllPath;
+            
 
 #ifndef FEATURE_CORECLR
             startupFlags = CorHost2::GetStartupFlags();
@@ -4954,12 +4954,12 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
                 startupMode = ETW::InfoLog::InfoStructs::Other;
             }
 
-            _ASSERTE (NumItems(dllPath) > MAX_LONGPATH);
+          
             // if WszGetModuleFileName fails, we return an empty string
-            if (!WszGetModuleFileName(GetCLRModule(), dllPath, MAX_LONGPATH)) {
-                dllPath[0] = 0;
+            if (!WszGetModuleFileName(GetCLRModule(), dllPath)) {
+                dllPath.Set(W("\0"));
             }
-            dllPath[MAX_LONGPATH] = 0;
+            
 
             if(type == ETW::InfoLog::InfoStructs::Callback)
             {
@@ -4977,7 +4977,7 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
                                                   startupMode,
                                                   lpwszCommandLine,
                                                   comGUID,
-                                                  lpwszRuntimeDllPath );
+                                                  dllPath );
             }
             else
             {
@@ -4995,7 +4995,7 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
                                                 startupMode,
                                                 lpwszCommandLine,
                                                 comGUID,
-                                                lpwszRuntimeDllPath );
+                                                dllPath );
             }
         }
     } EX_CATCH { } EX_END_CATCH(SwallowAllExceptions);
@@ -5013,7 +5013,6 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
 
 VOID ETW::CodeSymbolLog::EmitCodeSymbols(Module* pModule)
 {
-#if  !defined(FEATURE_PAL) //UNIXTODO: Enable EmitCodeSymbols
     CONTRACTL {
         NOTHROW;
         GC_NOTRIGGER;
@@ -5043,14 +5042,15 @@ VOID ETW::CodeSymbolLog::EmitCodeSymbols(Module* pModule)
                     // estmate. 
                     static const DWORD maxDataSize = 63000;
 
-                    ldiv_t qr = ldiv(length, maxDataSize);
-
+                    DWORD quot = length / maxDataSize;
+                    
                     // We do not allow pdbs of size greater than 2GB for now, 
                     // so totalChunks should fit in 16 bits.
-                    if (qr.quot < UINT16_MAX)
+                    if (quot < UINT16_MAX)
                     {
                         // If there are trailing bits in the last chunk, then increment totalChunks by 1
-                        UINT16 totalChunks = (UINT16)(qr.quot + ((qr.rem != 0) ? 1 : 0));
+                        DWORD rem = length % maxDataSize;
+                        UINT16 totalChunks = (UINT16)(quot + ((rem != 0) ? 1 : 0));
                         NewArrayHolder<BYTE> chunk(new BYTE[maxDataSize]);
                         DWORD offset = 0;
                         for (UINT16 chunkNum = 0; offset < length; chunkNum++)
@@ -5071,7 +5071,6 @@ VOID ETW::CodeSymbolLog::EmitCodeSymbols(Module* pModule)
             }
         }
     } EX_CATCH{} EX_END_CATCH(SwallowAllExceptions);
-#endif//  !defined(FEATURE_PAL)
 }
 
 /* Returns the length of an in-memory symbol stream
@@ -6805,15 +6804,38 @@ VOID ETW::MethodLog::SendEventsForNgenMethods(Module *pModule, DWORD dwEventOpti
     } CONTRACTL_END;
 
 #ifdef FEATURE_PREJIT
-    if(!pModule || !pModule->HasNativeImage())
+    if (!pModule)
         return;
 
-    MethodIterator mi(pModule);
+    PEImageLayout * pLoadedLayout = pModule->GetFile()->GetLoaded();
+    _ASSERTE(pLoadedLayout != NULL);
 
-    while(mi.Next())
+#ifdef FEATURE_READYTORUN
+    if (pLoadedLayout->HasReadyToRunHeader())
     {
-        MethodDesc *hotDesc = (MethodDesc *)mi.GetMethodDesc();
-        ETW::MethodLog::SendMethodEvent(hotDesc, dwEventOptions, FALSE);
+        ReadyToRunInfo::MethodIterator mi(pModule->GetReadyToRunInfo());
+        while (mi.Next())
+        {
+            // Call GetMethodDesc_NoRestore instead of GetMethodDesc to avoid restoring methods at shutdown.
+            MethodDesc *hotDesc = (MethodDesc *)mi.GetMethodDesc_NoRestore();
+            if (hotDesc != NULL)
+            {
+                ETW::MethodLog::SendMethodEvent(hotDesc, dwEventOptions, FALSE);
+            }
+        }
+
+        return;
+    }
+#endif // FEATURE_READYTORUN
+    if (pModule->HasNativeImage())
+    {
+        MethodIterator mi(pModule);
+
+        while (mi.Next())
+        {
+            MethodDesc *hotDesc = (MethodDesc *)mi.GetMethodDesc();
+            ETW::MethodLog::SendMethodEvent(hotDesc, dwEventOptions, FALSE);
+        }
     }
 #endif // FEATURE_PREJIT
 }
@@ -7388,32 +7410,5 @@ VOID ETW::EnumerationLog::EnumerationHelper(Module *moduleFilter, BaseDomain *do
         }    
     }    
 }
-
-#if defined(FEATURE_EVENTSOURCE_XPLAT)
-
-void QCALLTYPE XplatEventSourceLogger::LogEventSource(__in_z int eventID, __in_z LPCWSTR eventName, __in_z LPCWSTR eventSourceName, __in_z LPCWSTR payload)
-{
-    QCALL_CONTRACT;
-
-    BEGIN_QCALL;
-    FireEtwEventSource(eventID, eventName, eventSourceName, payload);
-    END_QCALL;
-}
-
-BOOL QCALLTYPE XplatEventSourceLogger::IsEventSourceLoggingEnabled()
-{
-    QCALL_CONTRACT;
-
-    BOOL retVal = FALSE;
-
-    BEGIN_QCALL;
-    retVal = XplatEventLogger::IsEventLoggingEnabled();
-    END_QCALL;
-    
-    return retVal;
-
-}
-
-#endif //defined(FEATURE_EVENTSOURCE_XPLAT)
 
 #endif // !FEATURE_REDHAWK

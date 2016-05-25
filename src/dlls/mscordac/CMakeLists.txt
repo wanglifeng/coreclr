@@ -30,7 +30,7 @@ if(WIN32)
     set(START_LIBRARY_GROUP)
     set(END_LIBRARY_GROUP)
 else(WIN32)
-    if(CLR_CMAKE_PLATFORM_LINUX)
+    if(CLR_CMAKE_PLATFORM_LINUX OR CLR_CMAKE_PLATFORM_NETBSD)
         # This option is necessary to ensure that the overloaded delete operator defined inside
         # of the utilcode will be used instead of the standard library delete operator.
         set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Xlinker -Bsymbolic -Bsymbolic-functions")
@@ -39,7 +39,7 @@ else(WIN32)
         # ensure proper resolving of circular references between a subset of the libraries.
         set(START_LIBRARY_GROUP -Wl,--start-group)
         set(END_LIBRARY_GROUP -Wl,--end-group)
-    endif(CLR_CMAKE_PLATFORM_LINUX)
+    endif(CLR_CMAKE_PLATFORM_LINUX OR CLR_CMAKE_PLATFORM_NETBSD)
 endif(WIN32)
 
 add_library_clr(mscordaccore SHARED ${CLR_DAC_SOURCES})
@@ -86,6 +86,7 @@ if(WIN32)
         uuid.lib
         user32.lib
         ${STATIC_MT_CRT_LIB}
+        ${STATIC_MT_VCRT_LIB}
     )
 else(WIN32)
     list(APPEND COREDAC_LIBRARIES
@@ -98,7 +99,4 @@ endif(WIN32)
 target_link_libraries(mscordaccore ${COREDAC_LIBRARIES})
 
 # add the install targets
-install (TARGETS mscordaccore DESTINATION .)
-if(WIN32)
-    install (FILES ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/mscordaccore.pdb DESTINATION PDB)
-endif(WIN32)
+install_clr(mscordaccore)

@@ -422,15 +422,8 @@ void PEImage::GetPathFromDll(HINSTANCE hMod, SString &result)
     }
     CONTRACTL_END;
 
-    DWORD ret;
-    DWORD length = MAX_LONGPATH;
-    do
-    {
-        WCHAR *buffer = result.OpenUnicodeBuffer(length);
-        ret = WszGetModuleFileName(hMod, buffer, length);
-        result.CloseBuffer(ret);
-        length *= 2;
-    } while (ret == 0);
+    WszGetModuleFileName(hMod, result);   
+    
 }
 #endif // !FEATURE_PAL
 
@@ -2109,7 +2102,7 @@ HRESULT RuntimeGetILFingerprintForPath(LPCWSTR path, IILFingerprint **ppFingerpr
 #endif //!DACCESS_COMPILE
 #endif //FEATURE_FUSION
 
-#if defined(FEATURE_HOSTED_BINDER) && !defined(DACCESS_COMPILE)
+#if !defined(DACCESS_COMPILE)
 PEImage * PEImage::OpenImage(
     ICLRPrivResource * pIResource,
     MDInternalImportFlags flags)

@@ -1001,14 +1001,7 @@ namespace System {
                 throw new ArgumentException(Environment.GetResourceString("Argument_InvalidOffLen"));
             Contract.EndContractBlock();
 
-#if FEATURE_LEGACYNETCF
-            if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8)
-                return MangoArraySortHelper<T>.Default.BinarySearch(array, index, length, value, comparer);
-            else
-                return ArraySortHelper<T>.Default.BinarySearch(array, index, length, value, comparer);
-#else
             return ArraySortHelper<T>.Default.BinarySearch(array, index, length, value, comparer);
-#endif
         }
 
         public static TOutput[] ConvertAll<TInput, TOutput>(TInput[] array, Converter<TInput,TOutput> converter) {
@@ -1571,9 +1564,10 @@ namespace System {
         public static void Reverse(Array array, int index, int length) {
             if (array==null) 
                 throw new ArgumentNullException("array");
-            if (index < array.GetLowerBound(0) || length < 0)
+            int lowerBound = array.GetLowerBound(0);
+            if (index < lowerBound || length < 0)
                 throw new ArgumentOutOfRangeException((index<0 ? "index" : "length"), Environment.GetResourceString("ArgumentOutOfRange_NeedNonNegNum"));
-            if (array.Length - (index - array.GetLowerBound(0)) < length)
+            if (array.Length - (index - lowerBound) < length)
                 throw new ArgumentException(Environment.GetResourceString("Argument_InvalidOffLen"));
             if (array.Rank != 1)
                 throw new RankException(Environment.GetResourceString("Rank_MultiDimNotSupported"));
@@ -1713,11 +1707,12 @@ namespace System {
                 throw new ArgumentNullException("keys");
             if (keys.Rank != 1 || (items != null && items.Rank != 1))
                 throw new RankException(Environment.GetResourceString("Rank_MultiDimNotSupported"));
-            if (items != null && keys.GetLowerBound(0) != items.GetLowerBound(0))
+            int keysLowerBound = keys.GetLowerBound(0);
+            if (items != null && keysLowerBound != items.GetLowerBound(0))
                 throw new ArgumentException(Environment.GetResourceString("Arg_LowerBoundsMustMatch"));
-            if (index < keys.GetLowerBound(0) || length < 0)
+            if (index < keysLowerBound || length < 0)
                 throw new ArgumentOutOfRangeException((length<0 ? "length" : "index"), Environment.GetResourceString("ArgumentOutOfRange_NeedNonNegNum"));
-            if (keys.Length - (index - keys.GetLowerBound(0)) < length || (items != null && (index - items.GetLowerBound(0)) > items.Length - length))
+            if (keys.Length - (index - keysLowerBound) < length || (items != null && (index - keysLowerBound) > items.Length - length))
                 throw new ArgumentException(Environment.GetResourceString("Argument_InvalidOffLen"));
 
             Contract.EndContractBlock();
@@ -1808,15 +1803,8 @@ namespace System {
                         return;
                     }
                 }
-                
-#if FEATURE_LEGACYNETCF
-                if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8)
-                    MangoArraySortHelper<T>.Default.Sort(array, index, length, comparer);                
-                else
-                    ArraySortHelper<T>.Default.Sort(array, index, length, comparer);                
-#else
+
                 ArraySortHelper<T>.Default.Sort(array, index, length, comparer);                
-#endif
             }
         }
 
@@ -1844,14 +1832,7 @@ namespace System {
                     return;
                 }
 
-#if FEATURE_LEGACYNETCF
-                if (CompatibilitySwitches.IsAppEarlierThanWindowsPhone8)
-                    MangoArraySortHelper<TKey>.Default.Sort<TValue>(keys, items, index, length, comparer);
-                else
-                    ArraySortHelper<TKey, TValue>.Default.Sort(keys, items, index, length, comparer);
-#else
                 ArraySortHelper<TKey, TValue>.Default.Sort(keys, items, index, length, comparer);
-#endif
             }
         }
 
@@ -2714,10 +2695,6 @@ namespace System {
             //! Warning: "this" is an array, not an SZArrayHelper. See comments above
             //! or you may introduce a security hole!
 
-            if (array != null && array.Rank != 1)
-                throw new ArgumentException(Environment.GetResourceString("Rank_MultiDimNotSupported"));
-            Contract.EndContractBlock();
-
             T[] _this = JitHelpers.UnsafeCast<T[]>(this);
             Array.Copy(_this, 0, array, index, _this.Length);
         }
@@ -2816,8 +2793,7 @@ namespace System {
 
             internal SZGenericArrayEnumerator(T[] array, int endIndex) {
                 // We allow passing null array in case of empty enumerator. 
-                Contract.Assert((array == null && endIndex == -1) || (array.Rank == 1 && array.GetLowerBound(0) == 0), 
-                   "SZArrayEnumerator<T> only works on single dimension arrays w/ a lower bound of zero or with empty array for null enumerator.");
+                Contract.Assert(array != null || endIndex == -1, "endIndex should be -1 in the case of a null array (for the empty enumerator).");
                 _array = array;
                 _index = -1;
                 _endIndex = endIndex;

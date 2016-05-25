@@ -2446,14 +2446,13 @@ BOOL ObjIsInstanceOf(Object *pObject, TypeHandle toTypeHnd, BOOL throwCastExcept
     // to a given type.
     else if (toTypeHnd.IsInterface() && fromTypeHnd.GetMethodTable()->IsICastable())
     {
-        // Make actuall call to obj.IsInstanceOfInterface(interfaceTypeObj, out exception)
+        // Make actuall call to ICastableHelpers.IsInstanceOfInterface(obj, interfaceTypeObj, out exception)
         OBJECTREF exception = NULL;
         GCPROTECT_BEGIN(exception);
-        MethodTable *pFromTypeMT = fromTypeHnd.GetMethodTable();
-        MethodDesc *pIsInstanceOfMD = pFromTypeMT->GetMethodDescForInterfaceMethod(MscorlibBinder::GetMethod(METHOD__ICASTABLE__ISINSTANCEOF)); //GC triggers
-        OBJECTREF managedType = toTypeHnd.GetManagedClassObject(); //GC triggers
+        
+        PREPARE_NONVIRTUAL_CALLSITE(METHOD__ICASTABLEHELPERS__ISINSTANCEOF);
 
-        PREPARE_NONVIRTUAL_CALLSITE_USING_METHODDESC(pIsInstanceOfMD);
+        OBJECTREF managedType = toTypeHnd.GetManagedClassObject(); //GC triggers
 
         DECLARE_ARGHOLDER_ARRAY(args, 3);
         args[ARGNUM_0] = OBJECTREF_TO_ARGHOLDER(obj);
@@ -3444,6 +3443,25 @@ HCIMPL2VA(Object*, JIT_NewMDArr, CORINFO_CLASS_HANDLE classHnd, unsigned dwNumAr
 
     ret = allocNewMDArr(typeHnd, dwNumArgs, dimsAndBounds);
     va_end(dimsAndBounds);
+
+    HELPER_METHOD_FRAME_END();
+    return OBJECTREFToObject(ret);
+}
+HCIMPLEND
+
+/*************************************************************/
+HCIMPL3(Object*, JIT_NewMDArrNonVarArg, CORINFO_CLASS_HANDLE classHnd, unsigned dwNumArgs, INT32 * pArgList)
+{
+    FCALL_CONTRACT;
+
+    OBJECTREF    ret = 0;
+    HELPER_METHOD_FRAME_BEGIN_RET_1(ret);    // Set up a frame
+
+    TypeHandle typeHnd(classHnd);
+    typeHnd.CheckRestore();
+    _ASSERTE(typeHnd.GetMethodTable()->IsArray());
+
+    ret = AllocateArrayEx(typeHnd, pArgList, dwNumArgs);
 
     HELPER_METHOD_FRAME_END();
     return OBJECTREFToObject(ret);
@@ -6039,24 +6057,7 @@ NOINLINE HCIMPL1(void, JIT_VerificationRuntimeCheck_Internal, CORINFO_METHOD_HAN
 #ifdef FEATURE_CORECLR
         // Transparent methods that contains unverifiable code is not allowed.
         MethodDesc *pMethod = GetMethod(methHnd_);
-
-#if defined(FEATURE_CORECLR_COVERAGE_BUILD) && defined(FEATURE_STRONGNAME_DELAY_SIGNING_ALLOWED)
-        // For code coverage builds we have an issue where the inserted IL is not verifiable.
-        // This means that transparent methods in platform assemblies will throw verification exceptions.
-        // Temporary fix is to allow transparent methods in platform assemblies to be unverifiable only on coverage builds.
-        // Paranoia: allow this only on non ret builds - all builds except the RET type will have
-        // FEATURE_STRONGNAME_DELAY_SIGNING_ALLOWED defined. So we can use that to figure out if this is a RET build
-        // type that someone is trying to relax that constraint on and not allow that.
-        if (!pMethod->GetModule()->GetFile()->GetAssembly()->IsProfileAssembly())
-        {
-            // Only throw if pMethod is not in any platform assembly.
-            SecurityTransparent::ThrowMethodAccessException(pMethod);
-        }
-#else // defined(FEATURE_CORECLR_COVERAGE_BUILD) && defined(FEATURE_STRONGNAME_DELAY_SIGNING_ALLOWED)
-
         SecurityTransparent::ThrowMethodAccessException(pMethod);
-#endif // defined(FEATURE_CORECLR_COVERAGE_BUILD) && defined(FEATURE_STRONGNAME_DELAY_SIGNING_ALLOWED)
-
 #else // FEATURE_CORECLR        
     //
     // inject a full-demand for unmanaged code permission at runtime
@@ -6693,8 +6694,8 @@ void F_CALL_VA_CONV JIT_TailCall(PCODE copyArgs, PCODE target, ...)
     CONTEXT   ctx;
 
     // Unwind back to our caller in managed code
-    static PRUNTIME_FUNCTION my_pdata;
-    static ULONG_PTR         my_imagebase;
+    static PT_RUNTIME_FUNCTION my_pdata;
+    static ULONG_PTR           my_imagebase;
 
     ctx.ContextFlags = CONTEXT_ALL;
     RtlCaptureContext(&ctx);
@@ -6892,17 +6893,17 @@ void F_CALL_VA_CONV JIT_TailCall(PCODE copyArgs, PCODE target, ...)
 // *****************************************************************************
 //  JitHelperLogging usage:
 //      1) Ngen using:
-//              COMPLUS_HardPrejitEnabled=0 
+//              COMPlus_HardPrejitEnabled=0 
 //
 //         This allows us to instrument even ngen'd image calls to JIT helpers. 
 //         Remember to clear the key after ngen-ing and before actually running 
 //         the app you want to log.
 //
 //      2) Then set:
-//              COMPLUS_JitHelperLogging=1
-//              COMPLUS_LogEnable=1
-//              COMPLUS_LogLevel=1
-//              COMPLUS_LogToFile=1
+//              COMPlus_JitHelperLogging=1
+//              COMPlus_LogEnable=1
+//              COMPlus_LogLevel=1
+//              COMPlus_LogToFile=1
 //
 //      3) Run the app that you want to log; Results will be in COMPLUS.LOG(.X)
 //
@@ -7052,7 +7053,7 @@ void InitJitHelperLogging()
                     hlpFuncCount->count = 0;
 #ifdef _TARGET_AMD64_
                     ULONGLONG           uImageBase;
-                    PRUNTIME_FUNCTION   pFunctionEntry;            
+                    PT_RUNTIME_FUNCTION   pFunctionEntry;            
                     pFunctionEntry  = RtlLookupFunctionEntry((ULONGLONG)hlpFunc->pfnHelper, &uImageBase, NULL);
 
                     if (pFunctionEntry != NULL)
@@ -7097,7 +7098,7 @@ void InitJitHelperLogging()
 
 #ifdef _TARGET_AMD64_
                     ULONGLONG           uImageBase;
-                    PRUNTIME_FUNCTION   pFunctionEntry;            
+                    PT_RUNTIME_FUNCTION   pFunctionEntry;            
                     pFunctionEntry  = RtlLookupFunctionEntry((ULONGLONG)hlpFunc->pfnHelper, &uImageBase, NULL);
 
                     if (pFunctionEntry != NULL)

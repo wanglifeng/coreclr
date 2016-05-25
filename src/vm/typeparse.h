@@ -51,9 +51,7 @@ DomainAssembly* LoadAssemblyFromPartialNameHack(SString* psszAssemblySpec, BOOL 
 DomainAssembly * LoadDomainAssembly(
     SString *  psszAssemblySpec, 
     Assembly * pRequestingAssembly, 
-#ifdef FEATURE_HOSTED_BINDER
     ICLRPrivBinder * pPrivHostBinder,
-#endif
     BOOL       bThrowIfNotFound, 
     BOOL       bIntrospectionOnly, 
     SString *  pssOuterTypeName);
@@ -207,7 +205,6 @@ private:
         TypeNameTokens LexAToken(BOOL ignorePlus = FALSE);
         BOOL GetIdentifier(SString* sszId, TypeNameIdentifiers identiferType);
         void NextToken()  { WRAPPER_NO_CONTRACT; m_currentToken = m_nextToken; m_currentItr = m_itr; m_nextToken = LexAToken(); }
-        void NextTokenLegacyAssemSpec()  { WRAPPER_NO_CONTRACT; m_currentToken = m_nextToken; m_currentItr = m_itr; m_nextToken = LexAToken(true); }
         BOOL NextTokenIs(TypeNameTokens token) { LIMITED_METHOD_CONTRACT; return !!(m_nextToken & token); }
         BOOL TokenIs(TypeNameTokens token) { LIMITED_METHOD_CONTRACT; return !!(m_currentToken & token); }
         BOOL TokenIs(int token) { LIMITED_METHOD_CONTRACT; return TokenIs((TypeNameTokens)token); }
@@ -376,11 +373,8 @@ public:
         BOOL bProhibitAssemblyQualifiedName,
         StackCrawlMark* pStackMark,
         BOOL bLoadTypeFromPartialNameHack,
-        OBJECTREF *pKeepAlive
-#ifdef FEATURE_HOSTED_BINDER
-        , ICLRPrivBinder * pPrivHostBinder = nullptr
-#endif
-        );
+        OBJECTREF *pKeepAlive,
+        ICLRPrivBinder * pPrivHostBinder = nullptr);
     
     
 public:
@@ -445,9 +439,7 @@ private:
                                     
         StackCrawlMark* pStackMark, 
         Assembly* pRequestingAssembly, 
-#ifdef FEATURE_HOSTED_BINDER
         ICLRPrivBinder * pPrivHostBinder,
-#endif
         BOOL bLoadTypeFromPartialNameHack,
         OBJECTREF *pKeepAlive);    
 

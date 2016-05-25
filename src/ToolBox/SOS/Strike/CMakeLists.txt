@@ -1,24 +1,40 @@
 # Set the RPATH of sos so that it can find dependencies without needing to set LD_LIBRARY_PATH
 # For more information: http://www.cmake.org/Wiki/CMake_RPATH_handling.
-if(CLR_CMAKE_PLATFORM_DARWIN)
+if (CORECLR_SET_RPATH)
+  set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+  if(CLR_CMAKE_PLATFORM_DARWIN)
     set(CMAKE_INSTALL_RPATH "@loader_path")
-else()
+  else()
     set(CMAKE_INSTALL_RPATH "\$ORIGIN")
-endif(CLR_CMAKE_PLATFORM_DARWIN)
+  endif(CLR_CMAKE_PLATFORM_DARWIN)
+endif (CORECLR_SET_RPATH)
 
 if(CLR_CMAKE_PLATFORM_ARCH_AMD64)
   add_definitions(-DSOS_TARGET_AMD64=1)
   add_definitions(-D_TARGET_WIN64_=1)
   add_definitions(-DDBG_TARGET_64BIT)
   add_definitions(-DDBG_TARGET_WIN64=1)
+  if(WIN32)
+    add_definitions(-DSOS_TARGET_ARM64=1)
+  endif(WIN32)
+  remove_definitions(-D_TARGET_ARM64_=1)
+  add_definitions(-D_TARGET_AMD64_)
+  add_definitions(-DDBG_TARGET_AMD64)
 elseif(CLR_CMAKE_PLATFORM_ARCH_I386)
   add_definitions(-DSOS_TARGET_X86=1)
   add_definitions(-D_TARGET_X86_=1)
   add_definitions(-DDBG_TARGET_32BIT)
+  add_definitions(-DSOS_TARGET_ARM=1)
 elseif(CLR_CMAKE_PLATFORM_ARCH_ARM)
   add_definitions(-DSOS_TARGET_ARM=1)
   add_definitions(-D_TARGET_WIN32_=1)
+  add_definitions(-D_TARGET_ARM_=1)
   add_definitions(-DDBG_TARGET_32BIT)
+elseif(CLR_CMAKE_PLATFORM_ARCH_ARM64)
+  add_definitions(-DSOS_TARGET_ARM64=1)
+  add_definitions(-D_TARGET_WIN64_=1)
+  add_definitions(-DDBG_TARGET_64BIT)
+  add_definitions(-DDBG_TARGET_WIN64=1)
 endif()
 add_definitions(-DSTRIKE)  
 
@@ -30,7 +46,7 @@ include_directories(${CLR_DIR}/src/gcdump)
 include_directories(${CLR_DIR}/src/debug/shim)
 
 if(WIN32)
-  include_directories("inc")
+  include_directories(inc)
   include_directories("$ENV{VSInstallDir}/DIA SDK/include")
 
   add_definitions(-DUSE_STL)
@@ -70,6 +86,7 @@ if(WIN32)
     dbgutil
     ${STATIC_MT_CRT_LIB}
     ${STATIC_MT_CPP_LIB}
+    ${STATIC_MT_VCRT_LIB}
     kernel32.lib
     user32.lib
     ole32.lib
@@ -87,6 +104,7 @@ else(WIN32)
   add_compile_options(-Wno-null-arithmetic)
   add_compile_options(-Wno-format)
 
+  include_directories(BEFORE xplat)
   include_directories(BEFORE ../lldbplugin/inc)
 
   add_compile_options(-fPIC)
@@ -96,6 +114,7 @@ else(WIN32)
     datatarget.cpp
     eeheap.cpp
     exts.cpp
+    gchist.cpp
     gcroot.cpp
     metadata.cpp
     sildasm.cpp
@@ -118,13 +137,24 @@ if(CLR_CMAKE_PLATFORM_ARCH_AMD64)
   set(SOS_SOURCES_ARCH
     disasmX86.cpp
   )
+  if(WIN32)
+    list(APPEND 
+      SOS_SOURCES_ARCH  
+      disasmARM64.cpp
+    )
+  endif(WIN32)
 elseif(CLR_CMAKE_PLATFORM_ARCH_I386)
   set(SOS_SOURCES_ARCH 
     disasmX86.cpp
+    disasmARM.cpp
   )
 elseif(CLR_CMAKE_PLATFORM_ARCH_ARM)
   set(SOS_SOURCES_ARCH
     disasmARM.cpp
+  )
+elseif(CLR_CMAKE_PLATFORM_ARCH_ARM64)
+  set(SOS_SOURCES_ARCH
+    disasmARM64.cpp
   )
 endif()
 
@@ -135,9 +165,8 @@ add_dependencies(sos mscordaccore)
 target_link_libraries(sos ${SOS_LIBRARY})
 
 # add the install targets
-install (TARGETS sos DESTINATION .)
-if(WIN32)
-  install (FILES ${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/sos.pdb DESTINATION PDB)
-else(WIN32)
-  install (FILES sosdocsunix.txt DESTINATION .)
-endif(WIN32)
+install_clr(sos)
+
+if(NOT WIN32)
+  install(FILES sosdocsunix.txt DESTINATION .)
+endif(NOT WIN32)

@@ -19,7 +19,6 @@ endif()
 list(APPEND CMAKE_REQUIRED_DEFINITIONS -D_FILE_OFFSET_BITS=64)
 
 check_include_files(ieeefp.h HAVE_IEEEFP_H)
-check_include_files(alloca.h HAVE_ALLOCA_H)
 check_include_files(sys/vmparam.h HAVE_SYS_VMPARAM_H)
 check_include_files(mach/vm_types.h HAVE_MACH_VM_TYPES_H)
 check_include_files(mach/vm_param.h HAVE_MACH_VM_PARAM_H)
@@ -36,7 +35,6 @@ check_include_files(libunwind.h HAVE_LIBUNWIND_H)
 check_include_files(runetype.h HAVE_RUNETYPE_H)
 check_include_files(lttng/tracepoint.h HAVE_LTTNG_TRACEPOINT_H)
 check_include_files(uuid/uuid.h HAVE_LIBUUID_H)
-check_include_files(uuid.h HAVE_BSD_UUID_H)
 
 check_function_exists(kqueue HAVE_KQUEUE)
 check_function_exists(getpwuid_r HAVE_GETPWUID_R)
@@ -75,8 +73,28 @@ check_function_exists(directio HAVE_DIRECTIO)
 check_function_exists(semget HAS_SYSV_SEMAPHORES)
 check_function_exists(pthread_mutex_init HAS_PTHREAD_MUTEXES)
 check_function_exists(ttrace HAVE_TTRACE)
-check_function_exists(unw_get_save_loc HAVE_UNW_GET_SAVE_LOC)
-check_function_exists(unw_get_accessors HAVE_UNW_GET_ACCESSORS)
+set(CMAKE_REQUIRED_LIBRARIES unwind unwind-generic)
+check_cxx_source_compiles("
+#include <libunwind.h>
+
+int main(int argc, char **argv) {
+  unw_cursor_t cursor;
+  unw_save_loc_t saveLoc;
+  int reg = UNW_REG_IP;
+  unw_get_save_loc(&cursor, reg, &saveLoc);
+
+  return 0;
+}" HAVE_UNW_GET_SAVE_LOC)
+check_cxx_source_compiles("
+#include <libunwind.h>
+
+int main(int argc, char **argv) {
+  unw_addr_space_t as;
+  unw_get_accessors(as);
+
+  return 0;
+}" HAVE_UNW_GET_ACCESSORS)
+set(CMAKE_REQUIRED_LIBRARIES)
 
 check_struct_has_member ("struct stat" st_atimespec "sys/types.h;sys/stat.h" HAVE_STAT_TIMESPEC)
 check_struct_has_member ("struct stat" st_atimensec "sys/types.h;sys/stat.h" HAVE_STAT_NSEC)
@@ -110,6 +128,16 @@ check_cxx_symbol_exists(CHAR_BIT limits.h HAVE_CHAR_BIT)
 check_cxx_symbol_exists(_DEBUG sys/user.h USER_H_DEFINES_DEBUG)
 check_cxx_symbol_exists(_SC_PHYS_PAGES unistd.h HAVE__SC_PHYS_PAGES)
 check_cxx_symbol_exists(_SC_AVPHYS_PAGES unistd.h HAVE__SC_AVPHYS_PAGES)
+
+check_cxx_source_runs("
+#include <uuid.h>
+
+int main(void) {
+  uuid_t uuid;
+  uint32_t status;
+  uuid_create(&uuid, &status);
+  return 0;
+}" HAVE_BSD_UUID_H)
 
 check_cxx_source_runs("
 #include <sys/param.h>
@@ -911,6 +939,41 @@ int main(int argc, char **argv)
         return 0;
 }" UNWIND_CONTEXT_IS_UCONTEXT_T)
 
+set(CMAKE_REQUIRED_LIBRARIES pthread)
+check_cxx_source_compiles("
+#include <errno.h>
+#include <pthread.h>
+#include <time.h>
+
+int main()
+{
+    pthread_mutexattr_t mutexAttributes;
+    pthread_mutexattr_init(&mutexAttributes);
+    pthread_mutexattr_setpshared(&mutexAttributes, PTHREAD_PROCESS_SHARED);
+    pthread_mutexattr_settype(&mutexAttributes, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutexattr_setrobust(&mutexAttributes, PTHREAD_MUTEX_ROBUST);
+
+    pthread_mutex_t mutex;
+    pthread_mutex_init(&mutex, &mutexAttributes);
+
+    pthread_mutexattr_destroy(&mutexAttributes);
+
+    struct timespec timeoutTime;
+    timeoutTime.tv_sec = 1; // not the right way to specify absolute time, but just checking availability of timed lock
+    timeoutTime.tv_nsec = 0;
+    pthread_mutex_timedlock(&mutex, &timeoutTime);
+    pthread_mutex_consistent(&mutex);
+
+    pthread_mutex_destroy(&mutex);
+
+    int error = EOWNERDEAD;
+    error = ENOTRECOVERABLE;
+    error = ETIMEDOUT;
+    error = 0;
+    return error;
+}" HAVE_FULLY_FEATURED_PTHREAD_MUTEXES)
+set(CMAKE_REQUIRED_LIBRARIES)
+
 if(CMAKE_SYSTEM_NAME STREQUAL Darwin)
   if(NOT HAVE_LIBUUID_H)
     unset(HAVE_LIBUUID_H CACHE)
@@ -925,6 +988,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL Darwin)
   set(PAL_PT_READ_D PT_READ_D)
   set(PAL_PT_WRITE_D PT_WRITE_D)
   set(HAS_FTRUNCATE_LENGTH_ISSUE 1)
+  set(HAVE_SCHED_OTHER_ASSIGNABLE 1)
+
 elseif(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
   if(NOT HAVE_LIBUNWIND_H)
     unset(HAVE_LIBUNWIND_H CACHE)
@@ -942,6 +1007,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
   set(PAL_PT_WRITE_D PT_WRITE_D)
   set(HAS_FTRUNCATE_LENGTH_ISSUE 0)
   set(BSD_REGS_STYLE "((reg).r_##rr)")
+  set(HAVE_SCHED_OTHER_ASSIGNABLE 1)
 
   if(EXISTS "/lib/libc.so.7")
     set(FREEBSD_LIBC "/lib/libc.so.7")
@@ -966,6 +1032,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL NetBSD)
   set(PAL_PT_WRITE_D PT_WRITE_D)
   set(HAS_FTRUNCATE_LENGTH_ISSUE 0)
   set(BSD_REGS_STYLE "((reg).regs[_REG_##RR])")
+  set(HAVE_SCHED_OTHER_ASSIGNABLE 0)
 
 elseif(CMAKE_SYSTEM_NAME STREQUAL SunOS)
   if(NOT HAVE_LIBUNWIND_H)
@@ -1003,6 +1070,7 @@ else() # Anything else is Linux
   set(PAL_PT_READ_D PTRACE_PEEKDATA)
   set(PAL_PT_WRITE_D PTRACE_POKEDATA)
   set(HAS_FTRUNCATE_LENGTH_ISSUE 0)
+  set(HAVE_SCHED_OTHER_ASSIGNABLE 1)
 endif(CMAKE_SYSTEM_NAME STREQUAL Darwin)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)

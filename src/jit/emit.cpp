@@ -16,6 +16,7 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 #pragma hdrstop
 #endif
 
+#include "hostallocator.h"
 #include "instr.h"
 #include "emit.h"
 #include "codegen.h"
@@ -264,13 +265,13 @@ static  unsigned    totActualSize;
         unsigned    emitter::emitIFcounts[emitter::IF_COUNT];
 
 static  unsigned    emitSizeBuckets[] = { 100, 1024*1, 1024*2, 1024*3, 1024*4, 1024*5, 1024*10, 0 };
-static  histo       emitSizeTable(DefaultAllocator::Singleton(), emitSizeBuckets);
+static  Histogram   emitSizeTable(HostAllocator::getHostAllocator(), emitSizeBuckets);
 
 static  unsigned    GCrefsBuckets[] = { 0, 1, 2, 5, 10, 20, 50, 128, 256, 512, 1024, 0 };
-static  histo       GCrefsTable(DefaultAllocator::Singleton(), GCrefsBuckets);
+static  Histogram   GCrefsTable(HostAllocator::getHostAllocator(), GCrefsBuckets);
 
 static  unsigned    stkDepthBuckets[] = { 0, 1, 2, 5, 10, 16, 32, 128, 1024, 0 };
-static  histo       stkDepthTable(DefaultAllocator::Singleton(), stkDepthBuckets);
+static  Histogram   stkDepthTable(HostAllocator::getHostAllocator(), stkDepthBuckets);
 
 size_t              emitter::emitSizeMethod;
 
@@ -318,16 +319,16 @@ void                emitterStaticStats(FILE* fout)
 
     fprintf(fout, "\n");
     fprintf(fout, "insPlaceholderGroupData:\n");
-    fprintf(fout, "Offset of igPhNext                = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhNext          ));
-    fprintf(fout, "Offset of igPhBB                  = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhBB            ));
-    fprintf(fout, "Offset of igPhInitGCrefVars       = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhInitGCrefVars ));
-    fprintf(fout, "Offset of igPhInitGCrefRegs       = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhInitGCrefRegs ));
-    fprintf(fout, "Offset of igPhInitByrefRegs       = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhInitByrefRegs ));
-    fprintf(fout, "Offset of igPhPrevGCrefVars       = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhPrevGCrefVars ));
-    fprintf(fout, "Offset of igPhPrevGCrefRegs       = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhPrevGCrefRegs ));
-    fprintf(fout, "Offset of igPhPrevByrefRegs       = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhPrevByrefRegs ));
-    fprintf(fout, "Offset of igPhType                = %2u\n", offsetof(emitter::insPlaceholderGroupData, igPhType          ));
-    fprintf(fout, "Size   of insPlaceholderGroupData = %u\n",  sizeof(  emitter::insPlaceholderGroupData                    ));
+    fprintf(fout, "Offset of igPhNext                = %2u\n", offsetof(insPlaceholderGroupData, igPhNext          ));
+    fprintf(fout, "Offset of igPhBB                  = %2u\n", offsetof(insPlaceholderGroupData, igPhBB            ));
+    fprintf(fout, "Offset of igPhInitGCrefVars       = %2u\n", offsetof(insPlaceholderGroupData, igPhInitGCrefVars ));
+    fprintf(fout, "Offset of igPhInitGCrefRegs       = %2u\n", offsetof(insPlaceholderGroupData, igPhInitGCrefRegs ));
+    fprintf(fout, "Offset of igPhInitByrefRegs       = %2u\n", offsetof(insPlaceholderGroupData, igPhInitByrefRegs ));
+    fprintf(fout, "Offset of igPhPrevGCrefVars       = %2u\n", offsetof(insPlaceholderGroupData, igPhPrevGCrefVars ));
+    fprintf(fout, "Offset of igPhPrevGCrefRegs       = %2u\n", offsetof(insPlaceholderGroupData, igPhPrevGCrefRegs ));
+    fprintf(fout, "Offset of igPhPrevByrefRegs       = %2u\n", offsetof(insPlaceholderGroupData, igPhPrevByrefRegs ));
+    fprintf(fout, "Offset of igPhType                = %2u\n", offsetof(insPlaceholderGroupData, igPhType          ));
+    fprintf(fout, "Size   of insPlaceholderGroupData = %u\n",  sizeof(  insPlaceholderGroupData                    ));
 
     fprintf(fout, "\n");
     fprintf(fout, "Size   of tinyID      = %2u\n", TINY_IDSC_SIZE);
@@ -421,15 +422,15 @@ void                emitterStats(FILE* fout)
     }
 
     fprintf(fout, "Descriptor size distribution:\n");
-    emitSizeTable.histoDsp(fout);
+    emitSizeTable.dump(fout);
     fprintf(fout, "\n");
 
     fprintf(fout, "GC ref frame variable counts:\n");
-    GCrefsTable.histoDsp(fout);
+    GCrefsTable.dump(fout);
     fprintf(fout, "\n");
 
     fprintf(fout, "Max. stack depth distribution:\n");
-    stkDepthTable.histoDsp(fout);
+    stkDepthTable.dump(fout);
     fprintf(fout, "\n");
 
     int             i;
@@ -924,8 +925,7 @@ void                emitter::emitTmpSizeChanged(unsigned tmpSize)
 
 #ifdef DEBUG
     // Workaround for FP code
-    static ConfigDWORD fMaxTempAssert;
-    bool bAssert = fMaxTempAssert.val(CLRConfig::INTERNAL_JITMaxTempAssert)?true:false;
+    bool bAssert = JitConfig.JitMaxTempAssert()?true:false;
 
     if (tmpSize > emitMaxTmpSize && bAssert)
     {
@@ -1166,7 +1166,6 @@ void                emitter::dispIns(instrDesc* id)
 #if     EMIT_TRACK_STACK_DEPTH
     assert((int)emitCurStackLvl >= 0);
 #endif
-
     size_t  sz = emitSizeOfInsDsc(id);
     assert(id->idDebugOnlyInfo()->idSize == sz); 
 #endif  // DEBUG
@@ -2189,7 +2188,7 @@ void                emitter::emitSetFrameRangeGCRs(int offsLo, int offsHi)
             printf("-%04X ... %04X\n", -offsLo, offsHi);
 #else
             printf("-%04X ... -%04X\n", -offsLo, -offsHi);
-            assert(offsHi <  0);
+            assert(offsHi <= 0);
 #endif
           
         }
@@ -2953,6 +2952,36 @@ void                emitter::emitDispVarSet()
 
 /*****************************************************************************/
 #endif//DEBUG
+
+#if defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+//------------------------------------------------------------------------  
+// emitSetSecondRetRegGCType: Sets the GC type of the second return register for instrDescCGCA struct.  
+//  
+// Arguments:  
+//    id            - The large call instr descriptor to set the second GC return register type on.  
+//    secondRetSize - The EA_SIZE for second return register type.  
+//  
+// Return Value:  
+//    None  
+//  
+
+void            emitter::emitSetSecondRetRegGCType(instrDescCGCA* id, emitAttr secondRetSize)
+{
+    if (EA_IS_GCREF(secondRetSize))
+    {
+        id->idSecondGCref(GCT_GCREF);
+    }
+    else if (EA_IS_BYREF(secondRetSize))
+    {
+        id->idSecondGCref(GCT_BYREF);
+    }
+    else
+    {
+        id->idSecondGCref(GCT_NONE);
+    }
+}
+#endif // defined(FEATURE_UNIX_AMD64_STRUCT_PASSING)
+
 /*****************************************************************************
  *
  *  Allocate an instruction descriptor for an indirect call.
@@ -2964,29 +2993,36 @@ void                emitter::emitDispVarSet()
  *  address mode displacement.
  */
 
-emitter::instrDesc  * emitter::emitNewInstrCallInd(int        argCnt,
-                                                   ssize_t    disp,
-                                                   VARSET_VALARG_TP GCvars,
-                                                   regMaskTP  gcrefRegs,
-                                                   regMaskTP  byrefRegs,
-                                                   emitAttr   retSizeIn)
+emitter::instrDesc  * emitter::emitNewInstrCallInd(int                                                 argCnt,
+                                                   ssize_t                                             disp,
+                                                   VARSET_VALARG_TP                                    GCvars,
+                                                   regMaskTP                                           gcrefRegs,
+                                                   regMaskTP                                           byrefRegs,
+                                                   emitAttr                                            retSizeIn
+                                                   FEATURE_UNIX_AMD64_STRUCT_PASSING_ONLY_ARG(emitAttr secondRetSize))
 {
-    emitAttr  retSize = retSizeIn ? EA_ATTR(retSizeIn) : EA_PTRSIZE;
+    emitAttr       retSize = (retSizeIn != EA_UNKNOWN) ? retSizeIn : EA_PTRSIZE;
 
     bool gcRefRegsInScratch = ((gcrefRegs & RBM_CALLEE_TRASH) != 0);
-    /*
-        Allocate a larger descriptor if any GC values need to be saved
-        or if we have an absurd number of arguments or a large address
-        mode displacement, or we have some byref registers
-     */
+    
+    // Allocate a larger descriptor if any GC values need to be saved
+    // or if we have an absurd number of arguments or a large address
+    // mode displacement, or we have some byref registers
+    // 
+    // On Amd64 System V OSs a larger descriptor is also needed if the 
+    // call returns a two-register-returned struct and the second 
+    // register (RDX) is a GCRef or ByRef pointer.
 
-    if  (!VarSetOps::IsEmpty(emitComp, GCvars)     ||   // any frame GCvars live
-         (gcRefRegsInScratch)        ||   // any register gc refs live in scratch regs
-         (byrefRegs != 0)            ||   // any register byrefs live
-         (disp < AM_DISP_MIN)        ||   // displacement too negative
-         (disp > AM_DISP_MAX)        ||   // displacement too positive
-         (argCnt > ID_MAX_SMALL_CNS) ||   // too many args
-         (argCnt < 0)                   ) // caller pops arguments
+
+    if  (!VarSetOps::IsEmpty(emitComp, GCvars)      ||  // any frame GCvars live
+         (gcRefRegsInScratch)                       ||  // any register gc refs live in scratch regs
+         (byrefRegs != 0)                           ||  // any register byrefs live
+         (disp < AM_DISP_MIN)                       ||  // displacement too negative
+         (disp > AM_DISP_MAX)                       ||  // displacement too positive
+         (argCnt > ID_MAX_SMALL_CNS)                ||  // too many args
+         (argCnt < 0)                                   // caller pops arguments
+                                                        // There is a second ref/byref return register.  
+         FEATURE_UNIX_AMD64_STRUCT_PASSING_ONLY(    || EA_IS_GCREF_OR_BYREF(secondRetSize)))
     {
         instrDescCGCA* id;
 
@@ -2999,6 +3035,10 @@ emitter::instrDesc  * emitter::emitNewInstrCallInd(int        argCnt,
         id->idcByrefRegs      = byrefRegs;
         id->idcArgCnt         = argCnt;
         id->idcDisp           = disp;
+
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+        emitSetSecondRetRegGCType(id, secondRetSize);
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING  
 
         return  id;
     }
@@ -3013,9 +3053,9 @@ emitter::instrDesc  * emitter::emitNewInstrCallInd(int        argCnt,
 
         /* Store the displacement and make sure the value fit */
         id->idAddr()->iiaAddrMode.amDisp  = disp;
- assert(id->idAddr()->iiaAddrMode.amDisp == disp);
+        assert(id->idAddr()->iiaAddrMode.amDisp == disp);
 
-        /* Save the the live GC registers in the unused 'idReg/idRg2' fields */
+        /* Save the the live GC registers in the unused register fields */
         emitEncodeCallGCregs(gcrefRegs, id);
 
         return  id;
@@ -3033,26 +3073,32 @@ emitter::instrDesc  * emitter::emitNewInstrCallInd(int        argCnt,
  *  and an arbitrarily large argument count.
  */
 
-emitter::instrDesc *emitter::emitNewInstrCallDir(int        argCnt,
-                                                 VARSET_VALARG_TP GCvars,
-                                                 regMaskTP  gcrefRegs,
-                                                 regMaskTP  byrefRegs,
-                                                 emitAttr   retSizeIn)
+emitter::instrDesc *emitter::emitNewInstrCallDir(int                                                 argCnt,
+                                                 VARSET_VALARG_TP                                    GCvars,
+                                                 regMaskTP                                           gcrefRegs,
+                                                 regMaskTP                                           byrefRegs,
+                                                 emitAttr                                            retSizeIn
+                                                 FEATURE_UNIX_AMD64_STRUCT_PASSING_ONLY_ARG(emitAttr secondRetSize))
 {
-    emitAttr       retSize = retSizeIn ? EA_ATTR(retSizeIn) : EA_PTRSIZE;
+    emitAttr       retSize = (retSizeIn != EA_UNKNOWN) ? retSizeIn : EA_PTRSIZE;
 
-    /*
-        Allocate a larger descriptor if new GC values need to be saved
-        or if we have an absurd number of arguments or if we need to
-        save the scope.
-     */
+    // Allocate a larger descriptor if new GC values need to be saved
+    // or if we have an absurd number of arguments or if we need to
+    // save the scope.
+    // 
+    // On Amd64 System V OSs a larger descriptor is also needed if the 
+    // call returns a two-register-returned struct and the second 
+    // register (RDX) is a GCRef or ByRef pointer.
+
     bool gcRefRegsInScratch = ((gcrefRegs & RBM_CALLEE_TRASH) != 0);
 
-    if  (!VarSetOps::IsEmpty(emitComp, GCvars)     ||   // any frame GCvars live
-         gcRefRegsInScratch          ||   // any register gc refs live in scratch regs
-         (byrefRegs != 0)            ||   // any register byrefs live
-         (argCnt > ID_MAX_SMALL_CNS) ||   // too many args
-         (argCnt < 0)                   ) // caller pops arguments
+    if  (!VarSetOps::IsEmpty(emitComp, GCvars)      ||   // any frame GCvars live
+         gcRefRegsInScratch                         ||   // any register gc refs live in scratch regs
+         (byrefRegs != 0)                           ||   // any register byrefs live
+         (argCnt > ID_MAX_SMALL_CNS)                ||   // too many args
+         (argCnt < 0)                                    // caller pops arguments
+                                                         // There is a second ref/byref return register.  
+        FEATURE_UNIX_AMD64_STRUCT_PASSING_ONLY(     || EA_IS_GCREF_OR_BYREF(secondRetSize)))
     {
         instrDescCGCA* id = emitAllocInstrCGCA(retSize);
 
@@ -3066,6 +3112,10 @@ emitter::instrDesc *emitter::emitNewInstrCallDir(int        argCnt,
         id->idcDisp           = 0;  
         id->idcArgCnt         = argCnt;
 
+#ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
+        emitSetSecondRetRegGCType(id, secondRetSize);
+#endif // FEATURE_UNIX_AMD64_STRUCT_PASSING
+
         return  id;
     }
     else
@@ -3077,7 +3127,7 @@ emitter::instrDesc *emitter::emitNewInstrCallDir(int        argCnt,
         /* Make sure we didn't waste space unexpectedly */
         assert(!id->idIsLargeCns());
 
-        /* Save the the live GC registers in the unused 'idReg/idRg2' fields */
+        /* Save the the live GC registers in the unused register fields */
         emitEncodeCallGCregs(gcrefRegs, id);
 
         return  id;
@@ -3671,6 +3721,8 @@ AGAIN:
         else if (emitIsUncondJump(jmp))
         {
             // Nothing to do; we don't shrink these.
+            assert(jmp->idjShort);
+            ssz = JMP_SIZE_SMALL;
         }
         else if (emitIsCmpJump(jmp))
         {
@@ -3681,6 +3733,12 @@ AGAIN:
             ssz = LBL_SIZE_SMALL;
             nsd = LBL_DIST_SMALL_MAX_NEG;
             psd = LBL_DIST_SMALL_MAX_POS;
+        }
+        else if (emitIsLoadConstant(jmp))
+        {
+            ssz = LDC_SIZE_SMALL;
+            nsd = LDC_DIST_SMALL_MAX_NEG;
+            psd = LDC_DIST_SMALL_MAX_POS;
         }
         else
         {
@@ -3742,6 +3800,41 @@ AGAIN:
         jmp->idjOffs -= adjLJ;
 
         // If this is a jump via register, the instruction size does not change, so we are done.
+
+#if defined(_TARGET_ARM64_)
+        // JIT code and data will be allocated together for arm64 so the relative offset to JIT data is known.
+        // In case such offset can be encodeable for `ldr` (+-1MB), shorten it.
+        if (jmp->idAddr()->iiaIsJitDataOffset())
+        {
+            // Reference to JIT data
+            assert(jmp->idIsBound());
+            UNATIVE_OFFSET srcOffs = jmpIG->igOffs + jmp->idjOffs;
+
+            int doff = jmp->idAddr()->iiaGetJitDataOffset();
+            assert(doff >= 0);
+            ssize_t imm = emitGetInsSC(jmp);
+            assert((imm >= 0) && (imm < 0x1000));   // 0x1000 is arbitrary, currently 'imm' is always 0
+
+            unsigned dataOffs = (unsigned)(doff + imm);
+            assert(dataOffs < emitDataSize());
+
+            // Conservately assume JIT data starts after the entire code size.
+            // TODO-ARM64: we might consider only hot code size which will be computed later in emitComputeCodeSizes().
+            assert(emitTotalCodeSize > 0);
+            UNATIVE_OFFSET maxDstOffs = emitTotalCodeSize + dataOffs;
+
+            // Check if the distance is within the encoding length.
+            jmpDist = maxDstOffs - srcOffs;
+            extra = jmpDist - psd;
+            if (extra <= 0)
+            {
+                goto SHORT_JMP;
+            }
+
+            // Keep the large form.
+            continue;
+        }
+#endif
 
         /* Have we bound this jump's target already? */
 
@@ -3931,10 +4024,6 @@ AGAIN:
             }
         }
 
-        // TODO-ARM64-NYI: we couldn't shorten the branch/label load into a size that fits a single b.cond or adr instruction. 
-        // We need to implement multiple-instruction sequences to handle large ranges, e.g. b.!cond / b, and adrp/adr.
-        NYI_ARM64("Implement pseudo-instructions for large conditional branch and large load label address");
-
         /* We arrive here if the jump couldn't be made short, at least for now */
 
         /* We had better not have eagerly marked the jump as short
@@ -4059,7 +4148,9 @@ AGAIN:
         //    insSize isz = emitInsSize(jmp->idInsFmt());
         //    jmp->idInsSize(isz);
 #elif defined(_TARGET_ARM64_)
-        // TODO-ARM64-NYI: Support large conditional pseudo-op branches
+        // The size of IF_LARGEJMP/IF_LARGEADR/IF_LARGELDC are 8 or 12.
+        // All other code size is 4.
+        assert((sizeDif == 4) || (sizeDif == 8));
 #else
   #error Unsupported or unset target architecture
 #endif
@@ -4196,6 +4287,14 @@ void                emitter::emitCheckFuncletBranch(instrDesc * jmp, insGroup * 
         return;
     }
 #endif // _TARGET_ARMARCH_
+
+#ifdef _TARGET_ARM64_
+    // No interest if it's not jmp.
+    if (emitIsLoadLabel(jmp) || emitIsLoadConstant(jmp))
+    {
+        return;
+    }
+#endif // _TARGET_ARM64_
 
     insGroup * tgtIG = jmp->idAddr()->iiaIGlabel;
     assert(tgtIG);
@@ -4343,9 +4442,9 @@ unsigned            emitter::emitEndCodeGen(Compiler *comp,
     emitFullGCinfo = fullPtrMap;
 
 #if EMITTER_STATS
-      GCrefsTable.histoRec(emitGCrFrameOffsCnt, 1);
-    emitSizeTable.histoRec(emitSizeMethod     , 1);
-    stkDepthTable.histoRec(emitMaxStackDepth  , 1);
+    GCrefsTable.record(emitGCrFrameOffsCnt);
+    emitSizeTable.record(static_cast<unsigned>(emitSizeMethod));
+    stkDepthTable.record(emitMaxStackDepth);
 #endif // EMITTER_STATS
 
     // Default values, correct even if EMIT_TRACK_STACK_DEPTH is 0.
@@ -4446,12 +4545,39 @@ unsigned            emitter::emitEndCodeGen(Compiler *comp,
     }
 #endif
 
+#ifdef _TARGET_ARM64_
+    // For arm64, we want to allocate JIT data always adjacent to code similar to what native compiler does.
+    // This way allows us to use a single `ldr` to access such data like float constant/jmp table.
+    if (emitTotalColdCodeSize > 0)
+    {
+        // JIT data might be far away from the cold code.
+        NYI_ARM64("Need to handle fix-up to data from cold code.");
+    }
+
+    UNATIVE_OFFSET roDataAlignmentDelta = 0;
+    if (emitConsDsc.dsdOffs)
+    {
+        UNATIVE_OFFSET roDataAlignment = sizeof(void*); // 8 Byte align by default.
+        roDataAlignmentDelta = (UNATIVE_OFFSET)ALIGN_UP(emitTotalHotCodeSize, roDataAlignment) - emitTotalHotCodeSize;
+        assert((roDataAlignmentDelta == 0) || (roDataAlignmentDelta == 4));
+    }
+    emitCmpHandle->allocMem(emitTotalHotCodeSize + roDataAlignmentDelta + emitConsDsc.dsdOffs, emitTotalColdCodeSize,
+        0,
+        xcptnsCount,
+        allocMemFlag,
+        (void**)&codeBlock, (void**)&coldCodeBlock,
+        (void**)&consBlock);
+
+    consBlock = codeBlock + emitTotalHotCodeSize + roDataAlignmentDelta;
+
+#else
     emitCmpHandle->allocMem( emitTotalHotCodeSize, emitTotalColdCodeSize,
                              emitConsDsc.dsdOffs,
                              xcptnsCount,
                              allocMemFlag,
                              (void**)&codeBlock, (void**)&coldCodeBlock, 
                              (void**)&consBlock);
+#endif
 
 
 //  if  (emitConsDsc.dsdOffs) printf("Cons=%08X\n", consBlock);
@@ -4903,7 +5029,8 @@ unsigned            emitter::emitEndCodeGen(Compiler *comp,
                     // Presumably we could also just call "emitOutputLJ(NULL, adr, jmp)", like for long jumps?
                     *(short int *)adr -= (short)adj;
 #elif defined(_TARGET_ARM64_)
-                    NYI_ARM64("Fill this in for Arm64");
+                    assert(!jmp->idAddr()->iiaHasInstrCount());
+                    emitOutputLJ(NULL, adr, jmp);
 #else
   #error Unsupported or unset target architecture
 #endif
@@ -4913,12 +5040,9 @@ unsigned            emitter::emitEndCodeGen(Compiler *comp,
                     // Patch Forward non-Short Jump
 #if defined(_TARGET_XARCH_)
                     *(int  *)adr -= adj;
-#elif defined(_TARGET_ARM_)
+#elif defined(_TARGET_ARMARCH_)
                     assert(!jmp->idAddr()->iiaHasInstrCount());
-                    // This handles both medium and long jumps
                     emitOutputLJ(NULL, adr, jmp);
-#elif defined(_TARGET_ARM64_)
-                    NYI_ARM64("Fill this in for Arm64");
 #else
   #error Unsupported or unset target architecture
 #endif

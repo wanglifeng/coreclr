@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 .assembly extern System.Console
 {
@@ -26,7 +27,7 @@
    ret
 }
 
-.method public static pinvokeimpl("msvcr110.dll" cdecl)
+.method public static pinvokeimpl("msvcrt.dll" cdecl)
     int32 isupper(int32) cil managed preservesig
 {
    .custom instance void [mscorlib]System.Security.SuppressUnmanagedCodeSecurityAttribute::ctor() = (01 00 00 00)
