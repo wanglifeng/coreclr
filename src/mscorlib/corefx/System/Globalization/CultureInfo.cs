@@ -4,7 +4,6 @@
 
 ////////////////////////////////////////////////////////////////////////////
 //
-//  Class:    CultureInfo
 //
 //
 //  Purpose:  This class represents the software preferences of a particular
@@ -13,7 +12,7 @@
 //            as well as methods for common operations such as printing
 //            dates and sorting strings.
 //
-//  Date:     March 31, 1999
+//
 //
 //  !!!! NOTE WHEN CHANGING THIS CLASS !!!!
 //
@@ -28,14 +27,15 @@
 ////////////////////////////////////////////////////////////////////////////
 
 using System;
-using System.Security;
-using System.Threading;
 using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics.Contracts;
 using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Diagnostics.Contracts;
-using System.Collections.Generic;
+using System.Runtime.Serialization;
+using System.Security;
+using System.Threading;
 
 namespace System.Globalization
 {
@@ -47,7 +47,8 @@ namespace System.Globalization
     using StringCultureInfoDictionary = LowLevelDictionary<string, CultureInfo>;
 #endif
 
-    public partial class CultureInfo : IFormatProvider
+    [Serializable]
+    public partial class CultureInfo : IFormatProvider, ICloneable
     {
         //--------------------------------------------------------------------//
         //                        Internal Information                        //
@@ -72,8 +73,10 @@ namespace System.Globalization
         // For supported culture, this will be the CultureData instance that read data from mscorlib assembly.
         // For customized culture, this will be the CultureData instance that read data from user customized culture binary file.
         //
+        [NonSerialized]
         internal CultureData m_cultureData;
 
+        [NonSerialized]
         internal bool m_isInherited;
 
         // Names are confusing.  Here are 3 names we have:
@@ -94,11 +97,13 @@ namespace System.Globalization
 
         // This will hold the non sorting name to be returned from CultureInfo.Name property.
         // This has a de-DE style name even for de-DE_phoneb type cultures
+        [NonSerialized]
         private string m_nonSortName;
 
         // This will hold the sorting name to be returned from CultureInfo.SortName property.
         // This might be completely unrelated to the culture name if a custom culture.  Ie en-US for fj-FJ.
         // Otherwise its the sort name, ie: de-DE or de-DE_phoneb
+        [NonSerialized]
         private string m_sortName;
 
 
@@ -131,6 +136,7 @@ namespace System.Globalization
         private static volatile StringCultureInfoDictionary s_NameCachedCultures;
 
         //The parent culture.
+        [NonSerialized]
         private CultureInfo m_parent;
 
         static AsyncLocal<CultureInfo> s_asyncLocalCurrentCulture; 
@@ -186,17 +192,22 @@ namespace System.Globalization
                     SR.ArgumentNull_String);
             }
 
+            InitializeFromName(name, useUserOverride);
+        }
+
+        private void InitializeFromName(string name, bool useUserOverride)
+        {
             // Get our data providing record
             this.m_cultureData = CultureData.GetCultureData(name, useUserOverride);
 
             if (this.m_cultureData == null)
-                throw new CultureNotFoundException(
-                    "name", name, SR.Argument_CultureNotSupported);
+            {
+                throw new CultureNotFoundException("name", name, SR.Argument_CultureNotSupported);
+            }
 
             this.m_name = this.m_cultureData.CultureName;
             this.m_isInherited = (this.GetType() != typeof(System.Globalization.CultureInfo));
         }
-
 
         // We do this to try to return the system UI language and the default user languages
         // This method will fallback if this fails (like Invariant)
@@ -264,6 +275,23 @@ namespace System.Globalization
             }
 
             return VerifyCultureName(culture.Name, throwException);
+        }
+
+        // We need to store the override from the culture data record.
+        private bool m_useUserOverride;
+
+        [OnSerializing]
+        private void OnSerializing(StreamingContext ctx)
+        {
+            m_name = m_cultureData.CultureName;
+            m_useUserOverride = m_cultureData.UseUserOverride;
+        }
+
+        [OnDeserialized]
+        private void OnDeserialized(StreamingContext ctx)
+        {
+            Contract.Assert(m_name != null, "[CultureInfo.OnDeserialized] m_name != null");
+            InitializeFromName(m_name, m_useUserOverride);
         }
 
         ////////////////////////////////////////////////////////////////////////
@@ -623,7 +651,7 @@ namespace System.Globalization
             }
         }
 
-        static private bool OkayToCacheClassWithCompatibilityBehavior
+        private static bool OkayToCacheClassWithCompatibilityBehavior
         {
             get
             {
@@ -778,7 +806,7 @@ namespace System.Globalization
                 {
                     // Change the calendar of DTFI to the specified calendar of this CultureInfo.
                     DateTimeFormatInfo temp = new DateTimeFormatInfo(this.m_cultureData, this.Calendar);
-                    temp.m_isReadOnly = m_isReadOnly;
+                    temp._isReadOnly = m_isReadOnly;
                     System.Threading.Interlocked.MemoryBarrier();
                     dateTimeInfo = temp;
                 }

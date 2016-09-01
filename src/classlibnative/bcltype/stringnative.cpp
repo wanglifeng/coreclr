@@ -285,7 +285,7 @@ FCIMPLEND
         STRINGREF value; INT32 thisOffset;} _compareOrdinalArgsEx;
 ==============================================================================*/
 
-FCIMPL5(INT32, COMString::CompareOrdinalEx, StringObject* strA, INT32 indexA, StringObject* strB, INT32 indexB, INT32 count)
+FCIMPL6(INT32, COMString::CompareOrdinalEx, StringObject* strA, INT32 indexA, INT32 countA, StringObject* strB, INT32 indexB, INT32 countB)
 {
     FCALL_CONTRACT;
 
@@ -294,41 +294,16 @@ FCIMPL5(INT32, COMString::CompareOrdinalEx, StringObject* strA, INT32 indexA, St
     DWORD *strAChars, *strBChars;
     int strALength, strBLength;
 
-    // This runtime test is handled in the managed wrapper.
+    // These runtime tests are handled in the managed wrapper.
     _ASSERTE(strA != NULL && strB != NULL);
-
-    //If any of our indices are negative throw an exception.
-    if (count<0)
-    {
-        FCThrowArgumentOutOfRange(W("count"), W("ArgumentOutOfRange_NegativeCount"));
-    }
-    if (indexA < 0)
-    {
-        FCThrowArgumentOutOfRange(W("indexA"), W("ArgumentOutOfRange_Index"));
-    }
-    if (indexB < 0)
-    {
-        FCThrowArgumentOutOfRange(W("indexB"), W("ArgumentOutOfRange_Index"));
-    }
+    _ASSERTE(indexA >= 0 && indexB >= 0);
+    _ASSERTE(countA >= 0 && countB >= 0);
 
     strA->RefInterpretGetStringValuesDangerousForGC((WCHAR **) &strAChars, &strALength);
     strB->RefInterpretGetStringValuesDangerousForGC((WCHAR **) &strBChars, &strBLength);
 
-    int countA = count;
-    int countB = count;
-
-    //Do a lot of range checking to make sure that everything is kosher and legit.
-    if (count  > (strALength - indexA)) {
-        countA = strALength - indexA;
-        if (countA < 0)
-            FCThrowArgumentOutOfRange(W("indexA"), W("ArgumentOutOfRange_Index"));
-    }
-
-    if (count > (strBLength - indexB)) {
-        countB = strBLength - indexB;
-        if (countB < 0)
-            FCThrowArgumentOutOfRange(W("indexB"), W("ArgumentOutOfRange_Index"));
-    }
+    _ASSERTE(countA <= strALength - indexA);
+    _ASSERTE(countB <= strBLength - indexB);
 
     // Set up the loop variables.
     strAChars = (DWORD *) ((WCHAR *) strAChars + indexA);
@@ -339,49 +314,6 @@ FCIMPL5(INT32, COMString::CompareOrdinalEx, StringObject* strA, INT32 indexA, St
     FC_GC_POLL_RET();
     return result;
 
-}
-FCIMPLEND
-
-/*=================================IndexOfChar==================================
-**Action:
-**Returns:
-**Arguments:
-**Exceptions:
-==============================================================================*/
-
-FCIMPL4 (INT32, COMString::IndexOfChar, StringObject* thisRef, CLR_CHAR value, INT32 startIndex, INT32 count )
-{
-    FCALL_CONTRACT;
-
-    VALIDATEOBJECT(thisRef);
-    if (thisRef==NULL)
-        FCThrow(kNullReferenceException);
-
-    WCHAR *thisChars;
-    int thisLength;
-
-    thisRef->RefInterpretGetStringValuesDangerousForGC(&thisChars, &thisLength);
-
-    if (startIndex < 0 || startIndex > thisLength) {
-        FCThrowArgumentOutOfRange(W("startIndex"), W("ArgumentOutOfRange_Index"));
-    }
-
-    if (count   < 0 || count > thisLength - startIndex) {
-        FCThrowArgumentOutOfRange(W("count"), W("ArgumentOutOfRange_Count"));
-    }
-
-    int endIndex = startIndex + count;
-    for (int i=startIndex; i<endIndex; i++)
-    {
-        if (thisChars[i]==((WCHAR)value))
-        {
-            FC_GC_POLL_RET();
-            return i;
-        }
-    }
-
-    FC_GC_POLL_RET();
-    return -1;
 }
 FCIMPLEND
 
@@ -442,56 +374,6 @@ FCIMPL4(INT32, COMString::IndexOfCharArray, StringObject* thisRef, CHARArray* va
 }
 FCIMPLEND
 
-
-/*===============================LastIndexOfChar================================
-**Action:
-**Returns:
-**Arguments:
-**Exceptions:
-==============================================================================*/
-
-FCIMPL4(INT32, COMString::LastIndexOfChar, StringObject* thisRef, CLR_CHAR value, INT32 startIndex, INT32 count )
-{
-    FCALL_CONTRACT;
-
-    VALIDATEOBJECT(thisRef);
-    WCHAR *thisChars;
-    int thisLength;
-
-    if (thisRef==NULL) {
-        FCThrow(kNullReferenceException);
-    }
-
-    thisRef->RefInterpretGetStringValuesDangerousForGC(&thisChars, &thisLength);
-
-    if (thisLength == 0) {
-        FC_GC_POLL_RET();
-        return -1;
-    }
-
-
-    if (startIndex<0 || startIndex>=thisLength) {
-        FCThrowArgumentOutOfRange(W("startIndex"), W("ArgumentOutOfRange_Index"));
-    }
-
-    if (count<0 || count - 1 > startIndex) {
-        FCThrowArgumentOutOfRange(W("count"), W("ArgumentOutOfRange_Count"));
-    }
-
-    int endIndex = startIndex - count + 1;
-
-    //We search [startIndex..EndIndex]
-    for (int i=startIndex; i>=endIndex; i--) {
-        if (thisChars[i]==((WCHAR)value)) {
-            FC_GC_POLL_RET();
-            return i;
-        }
-    }
-
-    FC_GC_POLL_RET();
-    return -1;
-}
-FCIMPLEND
 /*=============================LastIndexOfCharArray=============================
 **Action:
 **Returns:

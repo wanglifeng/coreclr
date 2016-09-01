@@ -4,28 +4,28 @@
 
 ////////////////////////////////////////////////////////////////////////////
 //
-//  Class:    TextInfo
 //
 //  Purpose:  This Class defines behaviors specific to a writing system.
 //            A writing system is the collection of scripts and
 //            orthographic rules required to represent a language as text.
 //
-//  Date:     March 31, 1999
 //
 ////////////////////////////////////////////////////////////////////////////
 
-using System.Security;
 using System;
+using System.Diagnostics.Contracts;
+using System.Runtime;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Serialization;
+using System.Security;
 using System.Text;
 using System.Threading;
-using System.Runtime;
-using System.Diagnostics.Contracts;
-using System.Runtime.InteropServices;
-using System.Runtime.CompilerServices;
 
 namespace System.Globalization
 {
-    public partial class TextInfo
+    [Serializable]
+    public partial class TextInfo : ICloneable, IDeserializationCallback
     {
         ////--------------------------------------------------------------------//
         ////                        Internal Information                        //
@@ -35,33 +35,29 @@ namespace System.Globalization
         ////  Variables.
         ////
 
-        private String m_listSeparator;
-        private bool m_isReadOnly = false;
+        [OptionalField(VersionAdded = 2)]
+        private String _listSeparator;
+        [OptionalField(VersionAdded = 2)]
+        private bool _isReadOnly = false;
 
-        ////
-        //// In Whidbey we had several names:
-        ////      m_win32LangID is the name of the culture, but only used for (de)serialization.
-        ////      customCultureName is the name of the creating custom culture (if custom)  In combination with m_win32LangID
-        ////              this is authoratative, ie when deserializing.
-        ////      m_cultureTableRecord was the data record of the creating culture.  (could have different name if custom)
-        ////      m_textInfoID is the LCID of the textinfo itself (no longer used)
-        ////      m_name is the culture name (from cultureinfo.name)
-        ////
-        //// In Silverlight/Arrowhead this is slightly different:
-        ////      m_cultureName is the name of the creating culture.  Note that we consider this authoratative,
+        ////      _cultureName is the name of the creating culture.  Note that we consider this authoratative,
         ////              if the culture's textinfo changes when deserializing, then behavior may change.
         ////              (ala Whidbey behavior).  This is the only string Arrowhead needs to serialize.
-        ////      m_cultureData is the data that backs this class.
-        ////      m_textInfoName is the actual name of the textInfo (from cultureData.STEXTINFO)
-        ////              this can be the same as m_cultureName on Silverlight since the OS knows
+        ////      _cultureData is the data that backs this class.
+        ////      _textInfoName is the actual name of the textInfo (from cultureData.STEXTINFO)
+        ////              this can be the same as _cultureName on Silverlight since the OS knows
         ////              how to do the sorting. However in the desktop, when we call the sorting dll, it doesn't
         ////              know how to resolve custom locle names to sort ids so we have to have alredy resolved this.
         ////      
 
-        private readonly String m_cultureName;      // Name of the culture that created this text info
-        private readonly CultureData m_cultureData;      // Data record for the culture that made us, not for this textinfo
-        private readonly String m_textInfoName;     // Name of the text info we're using (ie: m_cultureData.STEXTINFO)
-        private bool? m_IsAsciiCasingSameAsInvariant;
+        [OptionalField(VersionAdded = 3)]
+        private String _cultureName;      // Name of the culture that created this text info
+        [NonSerialized]
+        private CultureData _cultureData;      // Data record for the culture that made us, not for this textinfo
+        [NonSerialized]
+        private String _textInfoName;     // Name of the text info we're using (ie: _cultureData.STEXTINFO)
+        [NonSerialized]
+        private bool? _isAsciiCasingSameAsInvariant;
 
         // Invariant text info
         internal static TextInfo Invariant
@@ -75,6 +71,40 @@ namespace System.Globalization
         }
         internal volatile static TextInfo s_Invariant;
 
+        [OnSerializing]
+        private void OnSerializing(StreamingContext ctx) { }
+
+        [OnDeserializing]
+        private void OnDeserializing(StreamingContext ctx)
+        {
+            // Clear these so we can check if we've fixed them yet            
+            _cultureData = null;
+            _cultureName = null;
+        }
+
+        [OnDeserialized]
+        private void OnDeserialized(StreamingContext ctx)
+        {
+            OnDeserialized();
+        }
+
+        void IDeserializationCallback.OnDeserialization(Object sender)
+        {
+            OnDeserialized();
+        }
+
+        private void OnDeserialized()
+        {
+            // this method will be called twice because of the support of IDeserializationCallback
+            if (_cultureData == null)
+            {
+                // Get the text info name belonging to that culture
+                _cultureData = CultureInfo.GetCultureInfo(_cultureName).m_cultureData;
+                _textInfoName = _cultureData.STEXTINFO;
+                FinishInitialization(_textInfoName);
+            }
+        }
+
         //
         // Internal ordinal comparison functions
         //
@@ -87,7 +117,6 @@ namespace System.Globalization
         }
 
         // Currently we don't have native functions to do this, so we do it the hard way
-        [SecuritySafeCritical]
         internal static int IndexOfStringOrdinalIgnoreCase(String source, String value, int startIndex, int count)
         {
             if (count > source.Length || count < 0 || startIndex < 0 || startIndex >= source.Length || startIndex + count > source.Length)
@@ -99,7 +128,6 @@ namespace System.Globalization
         }
 
         // Currently we don't have native functions to do this, so we do it the hard way
-        [SecuritySafeCritical]
         internal static int LastIndexOfStringOrdinalIgnoreCase(String source, String value, int startIndex, int count)
         {
             if (count > source.Length || count < 0 || startIndex < 0 || startIndex > source.Length - 1 || (startIndex - count + 1 < 0))
@@ -121,7 +149,7 @@ namespace System.Globalization
         {
             get
             {
-                return m_textInfoName;
+                return _textInfoName;
             }
         }
 
@@ -135,7 +163,7 @@ namespace System.Globalization
         [System.Runtime.InteropServices.ComVisible(false)]
         public bool IsReadOnly
         {
-            get { return (m_isReadOnly); }
+            get { return (_isReadOnly); }
         }
 
         //////////////////////////////////////////////////////////////////////////
@@ -145,7 +173,7 @@ namespace System.Globalization
         ////  Is the implementation of IColnable.
         ////
         //////////////////////////////////////////////////////////////////////////
-        internal virtual Object Clone()
+        public virtual Object Clone()
         {
             object o = MemberwiseClone();
             ((TextInfo)o).SetReadOnlyState(false);
@@ -175,7 +203,7 @@ namespace System.Globalization
 
         private void VerifyWritable()
         {
-            if (m_isReadOnly)
+            if (_isReadOnly)
             {
                 throw new InvalidOperationException(SR.InvalidOperation_ReadOnly);
             }
@@ -183,7 +211,7 @@ namespace System.Globalization
 
         internal void SetReadOnlyState(bool readOnly)
         {
-            m_isReadOnly = readOnly;
+            _isReadOnly = readOnly;
         }
 
 
@@ -198,11 +226,11 @@ namespace System.Globalization
         {
             get
             {
-                if (m_listSeparator == null)
+                if (_listSeparator == null)
                 {
-                    m_listSeparator = this.m_cultureData.SLIST;
+                    _listSeparator = _cultureData.SLIST;
                 }
-                return (m_listSeparator);
+                return (_listSeparator);
             }
 
             set
@@ -212,7 +240,7 @@ namespace System.Globalization
                     throw new ArgumentNullException("value", SR.ArgumentNull_String);
                 }
                 VerifyWritable();
-                m_listSeparator = value;
+                _listSeparator = value;
             }
         }
 
@@ -327,13 +355,13 @@ namespace System.Globalization
         {
             get
             {
-                if (m_IsAsciiCasingSameAsInvariant == null)
+                if (_isAsciiCasingSameAsInvariant == null)
                 {
-                    m_IsAsciiCasingSameAsInvariant = CultureInfo.GetCultureInfo(m_textInfoName).CompareInfo.Compare("abcdefghijklmnopqrstuvwxyz",
+                    _isAsciiCasingSameAsInvariant = CultureInfo.GetCultureInfo(_textInfoName).CompareInfo.Compare("abcdefghijklmnopqrstuvwxyz",
                                                                              "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
                                                                              CompareOptions.IgnoreCase) == 0;
                 }
-                return (bool)m_IsAsciiCasingSameAsInvariant;
+                return (bool)_isAsciiCasingSameAsInvariant;
             }
         }
 
@@ -345,7 +373,7 @@ namespace System.Globalization
         {
             get
             {
-                return this.m_cultureData.IsRightToLeft;
+                return _cultureData.IsRightToLeft;
             }
         }
 
@@ -393,7 +421,7 @@ namespace System.Globalization
         ////////////////////////////////////////////////////////////////////////
         public override String ToString()
         {
-            return ("TextInfo - " + this.m_cultureData.CultureName);
+            return ("TextInfo - " + _cultureData.CultureName);
         }
 
         //
@@ -435,7 +463,6 @@ namespace System.Globalization
             }
 
             return (int)hash;
-
         }
 
         private unsafe int GetCaseInsensitiveHashCodeSlow(String str)

@@ -89,7 +89,7 @@ namespace System.Diagnostics.Tracing
         private static WriteEventErrorCode s_returnCode; // The last return code 
 
         private const int s_basicTypeAllocationBufferSize = 16;
-        private const int s_etwMaxNumberArguments = 64;
+        private const int s_etwMaxNumberArguments = 128;
         private const int s_etwAPIMaxRefObjCount = 8;
         private const int s_maxEventDataDescriptors = 128;
         private const int s_traceEventMaximumSize = 65482;
@@ -435,7 +435,7 @@ namespace System.Diagnostics.Tracing
 
             // However the framework version of EventSource DOES have ES_SESSION_INFO defined and thus
             // does not have this issue.  
-#if ES_SESSION_INFO
+#if ES_SESSION_INFO || !ES_BUILD_STANDALONE  
             int buffSize = 256;     // An initial guess that probably works most of the time.  
             byte* buffer;
             for (; ; )
@@ -476,6 +476,14 @@ namespace System.Diagnostics.Tracing
             }
 #else 
 #if !ES_BUILD_PCL && !FEATURE_PAL  // TODO command arguments don't work on PCL builds...
+            // This code is only used in the Nuget Package Version of EventSource.  because
+            // the code above is using APIs baned from UWP apps.     
+            // 
+            // TODO: In addition to only working when TraceEventSession enables the provider, this code
+            // also has a problem because TraceEvent does not clean up if the registry is stale 
+            // It is unclear if it is worth keeping, but for now we leave it as it does work
+            // at least some of the time.  
+
             // Determine our session from what is in the registry.  
             string regKey = @"\Microsoft\Windows\CurrentVersion\Winevt\Publishers\{" + m_providerId + "}";
             if (System.Runtime.InteropServices.Marshal.SizeOf(typeof(IntPtr)) == 8)
@@ -488,7 +496,7 @@ namespace System.Diagnostics.Tracing
             {
                 foreach (string valueName in key.GetValueNames())
                 {
-                    if (valueName.StartsWith("ControllerData_Session_"))
+                    if (valueName.StartsWith("ControllerData_Session_", StringComparison.Ordinal))
                     {
                         string strId = valueName.Substring(23);      // strip of the ControllerData_Session_
                         int etwSessionId;
@@ -500,7 +508,7 @@ namespace System.Diagnostics.Tracing
                             if (data != null)
                             {
                                 var dataAsString = System.Text.Encoding.UTF8.GetString(data);
-                                int keywordIdx = dataAsString.IndexOf("EtwSessionKeyword");
+                                int keywordIdx = dataAsString.IndexOf("EtwSessionKeyword", StringComparison.Ordinal);
                                 if (0 <= keywordIdx)
                                 {
                                     int startIdx = keywordIdx + 18;
@@ -552,7 +560,7 @@ namespace System.Diagnostics.Tracing
             dataStart = 0;
             if (filterData == null)
             {
-#if !ES_BUILD_PCL && !FEATURE_PAL
+#if (!ES_BUILD_PCL && !PROJECTN && !FEATURE_PAL)
                 string regKey = @"\Microsoft\Windows\CurrentVersion\Winevt\Publishers\{" + m_providerId + "}";
                 if (System.Runtime.InteropServices.Marshal.SizeOf(typeof(IntPtr)) == 8)
                     regKey = @"HKEY_LOCAL_MACHINE\Software" + @"\Wow6432Node" + regKey;

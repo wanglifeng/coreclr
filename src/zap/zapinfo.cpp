@@ -3434,6 +3434,9 @@ bool ZapInfo::getReadyToRunHelper(CORINFO_RESOLVED_TOKEN * pResolvedToken,
 	switch (id)
 	{
 	case CORINFO_HELP_READYTORUN_NEW:
+        // Call CEEInfo::getNewHelper to validate the request (e.g., check for abstract class).
+        m_pEEJitInfo->getNewHelper(pResolvedToken, m_currentMethodHandle);
+
 		if ((getClassAttribs(pResolvedToken->hClass) & CORINFO_FLG_SHAREDINST) != 0)
 			return false;   // Requires runtime lookup.
 		pImport = m_pImage->GetImportTable()->GetDynamicHelperCell(
@@ -3484,11 +3487,11 @@ bool ZapInfo::getReadyToRunHelper(CORINFO_RESOLVED_TOKEN * pResolvedToken,
 			pImport = m_pImage->GetImportTable()->GetDictionaryLookupCell(
 				(CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_DICTIONARY_LOOKUP_METHOD | fAtypicalCallsite), pResolvedToken, pGenericLookupKind);
 		}
-		else if (pGenericLookupKind->runtimeLookupKind == CORINFO_LOOKUP_THISOBJ)
-		{
-			pImport = m_pImage->GetImportTable()->GetDictionaryLookupCell(
-				(CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_DICTIONARY_LOOKUP_THISOBJ | fAtypicalCallsite), pResolvedToken, pGenericLookupKind);
-}
+        else if (pGenericLookupKind->runtimeLookupKind == CORINFO_LOOKUP_THISOBJ)
+        {
+            pImport = m_pImage->GetImportTable()->GetDictionaryLookupCell(
+                (CORCOMPILE_FIXUP_BLOB_KIND)(ENCODE_DICTIONARY_LOOKUP_THISOBJ | fAtypicalCallsite), pResolvedToken, pGenericLookupKind);
+        }
 		else
 		{
 			_ASSERTE(pGenericLookupKind->runtimeLookupKind == CORINFO_LOOKUP_CLASSPARAM);

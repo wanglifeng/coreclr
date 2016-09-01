@@ -177,7 +177,7 @@
 #include "ipcfunccall.h"
 #include "perflog.h"
 #include "../dlls/mscorrc/resource.h"
-#ifdef FEATURE_LEGACYSURFACE
+#if defined(FEATURE_LEGACYSURFACE) || defined(FEATURE_USE_LCID)
 #include "nlsinfo.h"
 #endif 
 #include "util.hpp"
@@ -1492,9 +1492,6 @@ void InnerCoEEShutDownCOM()
     // Cleanup cached factory pointer in SynchronizationContextNative
     SynchronizationContextNative::Cleanup();
 #endif    
-
-    // remove any tear-down notification we have setup
-    RemoveTearDownNotifications();
 }
 
 // ---------------------------------------------------------------------------
@@ -3730,8 +3727,7 @@ void InitializeGarbageCollector()
     IfFailThrow(hr);
 
     // Thread for running finalizers...
-    if (FinalizerThread::FinalizerThreadCreate() != 1)
-        ThrowOutOfMemory();
+    FinalizerThread::FinalizerThreadCreate();
 
     // Now we really have fully initialized the garbage collector
     SetGarbageCollectorFullyInitialized();

@@ -84,8 +84,6 @@ GPTR_IMPL(MethodTable,      g_pAsyncFileStream_AsyncResultClass);
 GPTR_IMPL(MethodTable,      g_pFreeObjectMethodTable);
 GPTR_IMPL(MethodTable,      g_pOverlappedDataClass);
 
-GPTR_IMPL(MethodTable,      g_ArgumentHandleMT);
-GPTR_IMPL(MethodTable,      g_ArgIteratorMT);
 GPTR_IMPL(MethodTable,      g_TypedReferenceMT);
 
 GPTR_IMPL(MethodTable,      g_pByteArrayMT);
@@ -111,6 +109,10 @@ GPTR_IMPL(Thread,g_pSuspensionThread);
 
 // Global SyncBlock cache
 GPTR_IMPL(SyncTableEntry,g_pSyncTable);
+
+#if defined(ENABLE_PERF_COUNTERS) || defined(FEATURE_EVENT_TRACE)
+DWORD g_dwHandles = 0;
+#endif // ENABLE_PERF_COUNTERS || FEATURE_EVENT_TRACE
 
 #ifdef STRESS_LOG
 GPTR_IMPL_INIT(StressLog, g_pStressLog, &StressLog::theLog);

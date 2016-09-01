@@ -309,10 +309,12 @@ LOCAL_LABEL(LNullThis):
 //
 // r12 = UMEntryThunk*
 //
-        NESTED_ENTRY UMThunkStub,_TEXT,NoHandler
+        NESTED_ENTRY UMThunkStub,_TEXT,UnhandledExceptionHandlerUnix
         PROLOG_PUSH         "{r4,r5,r7,r11,lr}"
-        push                {r0-r3,r12}
-        PROLOG_STACK_SAVE_OFFSET   r7, #28
+        PROLOG_STACK_SAVE_OFFSET   r7, #8
+
+        alloc_stack         4 * 5
+        stm                 sp, {r0-r3,r12}
 
         //GBLA UMThunkStub_HiddenArgOffest // offset of saved UMEntryThunk *
         //GBLA UMThunkStub_StackArgsOffest // offset of original stack args
@@ -378,8 +380,7 @@ LOCAL_LABEL(UMThunkStub_PostCall):
         mov                 r4, 0
         str                 r4, [r5, #Thread__m_fPreemptiveGCDisabled]
 
-        EPILOG_STACK_RESTORE_OFFSET    r7, #28
-        free_stack           4 * 5
+        EPILOG_STACK_RESTORE_OFFSET    r7, #8
         EPILOG_POP           "{r4,r5,r7,r11,pc}"
 
 LOCAL_LABEL(UMThunkStub_DoThreadSetup):
@@ -1159,7 +1160,7 @@ LOCAL_LABEL(DoWrite):
         UPDATE_GC_SHADOW \name, r0, r1
         UPDATE_CARD_TABLE \name, r0, r1, \mp, \post, r0
         bx lr
-    LEAF_END \name, _TEXT
+    LEAF_END_MARKED \name, _TEXT
     .endm
     
     .macro JIT_CHECKEDWRITEBARRIER_SP name, post
@@ -1171,7 +1172,7 @@ LOCAL_LABEL(DoWrite):
         UPDATE_CARD_TABLE \name, r0, r1, 0, \post, r0
 1:
         bx lr
-    LEAF_END \name, _TEXT
+    LEAF_END_MARKED \name, _TEXT
     .endm
     
     .macro JIT_CHECKEDWRITEBARRIER_MP name, post
@@ -1186,7 +1187,7 @@ LOCAL_LABEL(DoWrite):
 1:
         str r1, [r0]
         bx lr
-    LEAF_END \name, _TEXT
+    LEAF_END_MARKED \name, _TEXT
     .endm
     
     .macro JIT_BYREFWRITEBARRIER name, mp, post
@@ -1205,7 +1206,7 @@ LOCAL_LABEL(DoWrite):
         add r0, #4
         add r1, #4
         bx lr
-    LEAF_END \name, _TEXT
+    LEAF_END_MARKED \name, _TEXT
     .endm
     
     .macro JIT_WRITEBARRIER_DESCRIPTOR name
@@ -1360,3 +1361,28 @@ DelayLoad_Helper\suffix:
     DynamicHelper DynamicHelperFrameFlags_ObjectArg | DynamicHelperFrameFlags_ObjectArg2, _ObjObj
 
 #endif // FEATURE_READYTORUN
+
+#ifdef FEATURE_HIJACK
+
+// ------------------------------------------------------------------
+// Hijack function for functions which return a value type
+        NESTED_ENTRY OnHijackTripThread, _TEXT, NoHandler
+        PROLOG_PUSH "{r0,r4-r11,lr}"
+
+        PROLOG_VPUSH "{d0-d3}"    // saving as d0-d3 can have the floating point return value
+        PROLOG_PUSH "{r1}"        // saving as r1 can have partial return value when return is > 32 bits
+        alloc_stack 4             // 8 byte align
+
+        CHECK_STACK_ALIGNMENT
+
+        add r0, sp, #40
+        bl C_FUNC(OnHijackWorker)
+
+        free_stack 4
+        EPILOG_POP "{r1}"
+        EPILOG_VPOP "{d0-d3}"
+
+        EPILOG_POP "{r0,r4-r11,pc}"
+        NESTED_END OnHijackTripThread, _TEXT
+#endif
+
